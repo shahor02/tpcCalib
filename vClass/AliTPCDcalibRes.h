@@ -32,8 +32,9 @@
 class AliTPCDcalibRes: public TObject
 {
  public:
-  enum {kEpanechnikovKernel, kGausianKernel};  // defined kernels
+  enum {kEpanechnikovKernel, kGaussianKernel};  // defined kernels
   enum {kNSect=18,kNSect2=2*kNSect,kNROC=4*kNSect,kNPadRows=159, kNRowIROC=63, kNRowOROC1=64, kNRowOROC2=32};
+  enum {kNQBins=4};
   enum {kAlignmentBugFixedBit = AliTPCcalibAlignInterpolation::kAlignmentBugFixedBit};
 
   //
@@ -58,17 +59,20 @@ class AliTPCDcalibRes: public TObject
     UChar_t dz;   // Z residual
     UChar_t bvox[kVoxDim]; // voxel bin info: kVoxQ,kVoxF,kVoxX,kVoxZ
   };
-
-  struct bres_t  { // final result for the voxel
+  
+  struct bres_t  {
     Float_t D[kResDim];      // values of extracted distortions
     Float_t E[kResDim];      // their errors
+    Float_t DS[kResDim];     // smoothed residual
+    Float_t DC[kResDim];     // Cheb parameterized residual
     Float_t stat[kVoxHDim];  // statistics: averages (weigted over Q bins) of each voxel dimension + entries
-    Float_t DS[kResDim];     // smoothed value
     UChar_t bvox[kVoxDim];   // voxel identifier, here the bvox[0] shows number of Q bins used for Y
     UChar_t bsec;            // sector ID (0-35)
     UChar_t smooth;          // smoother flag
+    //
+    bres_t() {memset(this,0,sizeof(bres_t));}
   };
-
+  
   struct bstat_t {           // stat info on the voxel
     Float_t stat[kVoxHDim];  // statistics: averages of each voxel dimension + entries
     Float_t distY[kNEstPar]; // distortion estimators for Y
@@ -94,12 +98,12 @@ public:
 	    ,int maxTracks,
 	    Bool_t fixAlignmentBug,int cacheInp,int learnSize,Bool_t switchCache);
   void CollectData();
+  void ProcessResiduals();
   void WriteVoxelDefinitions();
   void ProcessSectorResiduals(int is, bstat_t &voxStat);
   void ExtractVoxelData(bstat_t &stat,const TNDArrayT<short>* harrY,
 			const TNDArrayT<short>* harrZ,const TNDArrayT<float>* harrStat);
-  void ExtractDistortionsData(TH1F* histo, float est[kNEstPar],float minNorm, 
-			      float fracLTM, float fitNSig);
+  void ExtractDistortionsData(TH1F* histo, float est[kNEstPar], float minNorm=5.f, float fracLTM=0.7f);
 
   void InitForBugFix(const char* ocdb="raw://");
   THnF* CreateVoxelStatHisto(int sect);
@@ -122,9 +126,8 @@ public:
   TH1F* ExtractResidualHisto(Bool_t y, int sect, const UChar_t vox[kVoxDim]);
   TH1F* ExtractResidualHisto(Bool_t y, int sect, const UChar_t vox[kVoxDim], const UChar_t vox1[kVoxDim]);
   void  ExtractXYZDistortions();
-  Bool_t ExtractVoxelXYZDistortions(const bstat_t voxIQ[kNQBins],bres_t &res, int minStat, 
-				    float maxGChi2, int minYBinsOK);
-
+  Bool_t ExtractVoxelXYZDistortions(const bstat_t voxIQ[kNQBins], bres_t &res, 
+				    int minStat=20, float maxGChi2=5, int minYBinsOK=3);
   void  FixAlignmentBug(int sect, float q2pt, float bz, float& alp, float& x, float &z, float &deltaY, float &deltaZ);
 
   Bool_t ValidateTrack(int nCl, float q2pt, float *arrX, const float *arrY, const float* arrZ,
@@ -157,7 +160,7 @@ public:
   
 
   Int_t Smooth0(int isect);
-  Bool_t GetSmoothEstimate(int isect, float x, float p, float z, float *res, float *deriv);
+  Bool_t GetSmoothEstimate(int isect, float x, float p, float z, float *res, float *deriv=0);
   void SetKernelType(int tp=kEpanechnikovKernel, float bwX=2.5, float bwP=2.5, float bwZ=2.1, 
 		     float scX=1.f,float scP=1.f,float scZ=1.f);
   
@@ -182,12 +185,13 @@ public:
   Int_t   GetZ2XBinExact(float z2x);
   Int_t   GetZ2XBin(float z2x);
   Float_t GetZ2XLow(int iz);
+  Float_t GetZ2X(int iz);
   Float_t GetDZ2X();
   Float_t GetDZ2XI();
   void    FindVoxel(float x, float y2x, float z2x, int &ix,int &ip, int &iz);
   void    FindVoxel(float x, float y2x, float z2x, UChar_t &ix,UChar_t &ip, UChar_t &iz);
   void    GetVoxelCoordinates(int isec, int ix, int ip, int iz,float &x, float &p, float &z);
-  Double_t GetKernelWeight(double *u2vec, int np);
+  Double_t GetKernelWeight(double *u2vec, int np) const;
   //  Int_t  GetQBin(float tgp, int binX, int binY);
   Int_t  GetQBin(float tgp);
   Long64_t GetBin2Fill(const Long64_t bprod[kVoxHDim],const UChar_t binVox[kVoxDim], UShort_t bVal);
@@ -202,9 +206,8 @@ protected:
   Bool_t   fFixAlignmentBug;                        // flag to apply the fix
   Bool_t   fApplyZt2Zc;                             // Apply fix for using Z_track instead of Z_cluster in the data
 
-
   // --------------------------------Chebyshev object creation 
-  Int_t    fChebZSlicePerSide1;                     // z partitions per side
+  Int_t    fChebZSlicePerSide;                      // z partitions per side
   Int_t    fChebPhiSlicePerSector;                  // azimuthal partitions per sector
   Int_t    fNPCheb[3][2];                           // cheb. nodes per slice
 
@@ -230,15 +233,17 @@ protected:
   Float_t  fNVoisinMA;               // N neighbours for moving average
   Float_t  fMaxStdDevMA;             // max cluster N std.dev (Y^2+Z^2) wrt moving av. to accept
   Float_t  fMaxRejFrac;              // max outlier clusters tagged to accept the track
+  Bool_t   fFilterOutliers;          // reject outliers
+
 
   // -------------------------------Binning
   Float_t  fMaxDY;   // max residual in Y
   Float_t  fMaxDZ;   // max residual in Z
   Float_t  fMaxQ2Pt; // max |q/pt|
   Float_t  fMidQ2Pt; // middle |q/pt| for slopes binning 
-  Int_t    fNY2XBins=-1;  // y/x bins per sector
+  Int_t    fNY2XBins;    // y/x bins per sector
   Int_t    fNZ2XBins;    // z/x bins per sector
-  Int_t    fNXBins=-1;    // n bins in radial dim.
+  Int_t    fNXBins;      // n bins in radial dim.
   Int_t    fNDeltaYBins; // n bins in Y residual space
   Int_t    fNDeltaZBins; // n bins in Z residual space
   Bool_t   fUniformBins[kVoxDim]; // uniform binning? Currently only X may be non-uniform (per pad-row)
@@ -293,22 +298,13 @@ protected:
   TTree* fTmpTree[kNSect2];              //! IO tree per sector
   TFile* fTmpFile[kNSect2];              //! file for fTmpTree
   THnF*  fStatHist[kNSect2];             //! histos for statistics bins
-  TNDArrayT<float> *farrNDstat[kNSect2]; //! alias arrays for fast access to fStatHist
+  TNDArrayT<float> *fArrNDstat[kNSect2]; //! alias arrays for fast access to fStatHist
 
   TH1F* fHDelY;                          //! work histo for delta Y fits
   TH1F* fHDelZ;                          //! work histo for delta Z fits
-
-  // ---------------------------------- outliers rejection
-  Bool_t  fFilterOutliers;               // reject outliers
-  Int_t   fMaxSkippedCluster=10;  // 10 cluster
-  Float_t fMaxRMSTrackCut=2.0;    // maximal RMS (cm) between the tracks 
-  Float_t fMaxRMSClusterCut=0.3;    // maximal RMS (cm) between the cluster and local mean
-  Float_t fMaxDeltaClusterCut=0.5;    // maximal delta(cm) between the cluster and local mean
   
   //
   static const float kSecDPhi;
-  static const float kSecDPhiH;
-  static const float kMaxY2X; // max Y/X in sector coordinates (w/o excluding dead zone)
   static const float kMinX;   // min X to cover
   static const float kMaxX;   // max X to cover
   static const float kMaxZ2X;   // max z/x
@@ -318,7 +314,6 @@ protected:
   static const char* kResOut;
   static const char* kDriftFileName;
   static const float kDeadZone;  // dead zone on sector edges in cm
-  static const int   kNQBins;     // number of bins in voxQ variable
   static const ULong64_t kMByte;
   static const Float_t kZeroK; // zero kernel weight
 
@@ -439,7 +434,7 @@ inline Int_t AliTPCDcalibRes::GetZ2XBin(float z2x)
 }
 
 //________________________________________________________________
-inline Float_t GetZ2X(int iz)
+inline Float_t AliTPCDcalibRes::GetZ2X(int iz)
 {
   // get Z2X bin center for iz, !! always positive
   return (0.5f+iz)*GetDZ2X();
@@ -496,29 +491,14 @@ inline void AliTPCDcalibRes::GetVoxelCoordinates(int isec, int ix, int ip, int i
   if (isec>=kNSect) z = -z;
 }
 
-//_____________________________________
-inline Double_t AliTPCDcalibRes::GetKernelWeight(double u2)
-{
-  if (fKernelType == kEpanechnikovKernel) {
-    if (u2>1) return 0.;
-    return 3./4.*(1.-u2);
-  }
-  else if (fKernelType == kGaussianKernel) {
-    return u2<5 ? TMath::Exp(-u2)/TMath::Sqrt(2.*TMath::Pi()) : 0;
-  }
-  else {
-    ::Fatal("GetKernelWeight","Kernel type %d is not defined",fKernelType);
-  }
-}
-
 //_____________________________________________________
 inline Int_t AliTPCDcalibRes::GetQBin(float q2pt)
 {
   // get binID in track Q variable (tg of inclination) for given X,Y bin
   //
   float q2ptA = TMath::Abs(q2pt);
-  if (q2pTA>=fMaxQ2Pt) return -1;
-  int bin = (q2pTA<fMidQ2Pt) ?  0 : 1;
+  if (q2ptA>=fMaxQ2Pt) return -1;
+  int bin = (q2ptA<fMidQ2Pt) ?  0 : 1;
   if (q2pt>0) bin = kNQBins-1 - bin;
 }
 //_____________________________________________________

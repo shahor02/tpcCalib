@@ -1,16 +1,18 @@
 #include "AliTPCDcalibRes.h"
+#include "AliLog.h"
+
+// this must be standalone f-n, since the signature is important for Chebyshev training
+void trainCorr(int row, float* tzLoc, float* corrLoc);
 
 
-const char* AliTPCDcalibRes::kVoxName[kVoxDim] = {"tgSlp","y2x","x","z2x"};
-const char* AliTPCDcalibRes::kResName[kResDim] = {"dX","dY","dZ"};
-const char* AliTPCDcalibRes::kEstName[kNEstPar] = {
+const char* AliTPCDcalibRes::kVoxName[AliTPCDcalibRes::kVoxDim] = {"tgSlp","y2x","x","z2x"};
+const char* AliTPCDcalibRes::kResName[AliTPCDcalibRes::kResDim] = {"dX","dY","dZ"};
+const char* AliTPCDcalibRes::kEstName[AliTPCDcalibRes::kNEstPar] = {
   "Nrm","Mean","Sig","Max",
   "MeanL","MeanEL","SigL","SigEL",
   "NormG","MeanG","MeanEG","SigG","SigEG","Chi2G"};
 
-const float AliTPCDcalibRes::kSecDPhi=20.f*TMath::DegToRad();
-const float AliTPCDcalibRes::kSecDPhiH = AliTPCDcalibRes::kSecDPhi*0.5f;
-const float AliTPCDcalibRes::kMaxY2X = TMath::Tan(kSecDPhiH);
+const float AliTPCDcalibRes::kSecDPhi = 20.f*TMath::DegToRad();
 const float AliTPCDcalibRes::kMinX = 85.0f;
 const float AliTPCDcalibRes::kMaxX = 246.0f;
 const float AliTPCDcalibRes::kMaxZ2X = 1.0f;
@@ -20,7 +22,6 @@ const char* AliTPCDcalibRes::kStatOut      = "voxelStat";
 const char* AliTPCDcalibRes::kResOut       = "voxelRes";
 const char* AliTPCDcalibRes::kDriftFileName= "fitDrift";
 const float AliTPCDcalibRes::kDeadZone = 1.5;
-const int   AliTPCDcalibRes::kNQBins = 4;
 const ULong64_t AliTPCDcalibRes::kMByte = 1024LL*1024LL;
 const Float_t AliTPCDcalibRes::kZeroK = 1e-6;
 
@@ -79,6 +80,7 @@ AliTPCDcalibRes::AliTPCDcalibRes( ) :
   ,fNVoisinMA(3)
   ,fMaxStdDevMA(25.0)
   ,fMaxRejFrac(0.15)
+  ,fFilterOutliers(kTRUE) 
 
   ,fMaxDY(6.f)
   ,fMaxDZ(6.f)
@@ -105,7 +107,7 @@ AliTPCDcalibRes::AliTPCDcalibRes( ) :
   ,fBinDQI(0)
 
   ,fNMaxNeighb(0)
-  ,fKernelType(kGausianKernel)
+  ,fKernelType(kGaussianKernel)
   
 
   ,fNTrSelTot(0)
@@ -120,13 +122,6 @@ AliTPCDcalibRes::AliTPCDcalibRes( ) :
   ,fStatTree(0)
   ,fHDelY(0)
   ,fHDelZ(0)
-
-  ,fFilterOutliers(kTRUE) 
-  ,fMaxSkippedCluster(10)  // 10 cluster
-  ,fMaxRMSTrackCut(2.0)    // maximal RMS (cm) between the tracks 
-  ,fMaxRMSClusterCut(0.3)    // maximal RMS (cm) between the cluster and local mean
-  ,fMaxDeltaClusterCut(0.5)    // maximal delta(cm) between the cluster and local mean
-
 
 {
   for (int i=0;i<kResDim;i++) {
@@ -154,7 +149,7 @@ AliTPCDcalibRes::AliTPCDcalibRes( ) :
     fSectGVoxRes[i] = 0;
     fTmpTree[i] = 0;
     fStatHist[i] = 0;
-    farrNDstat[i] = 0;
+    fArrNDstat[i] = 0;
     fTmpFile[i] = 0;
   }
 }
@@ -272,13 +267,13 @@ void AliTPCDcalibRes::CollectData()
   dts_t dts, *dtsP = &dts; 
   //
   for (int is=0;is<kNSect2;is++) {
-    tmpFile[is] = TFile::Open(Form("%s%d.root",kTmpFileName,is),"recreate");
-    tmpTree[is] = new TTree(Form("ts%d",is),"");
-    tmpTree[is]->Branch("dts",&dtsP);
-    //tmpTree[is]->SetAutoFlush(150000);
+    fTmpFile[is] = TFile::Open(Form("%s%d.root",kTmpFileName,is),"recreate");
+    fTmpTree[is] = new TTree(Form("ts%d",is),"");
+    fTmpTree[is]->Branch("dts",&dtsP);
+    //fTmpTree[is]->SetAutoFlush(150000);
     //
-    statHist[is] = CreateVoxelStatHisto(is);
-    arrNDstat[is] = (TNDArrayT<float>*)&statHist[is]->GetArray();
+    fStatHist[is] = CreateVoxelStatHisto(is);
+    fArrNDstat[is] = (TNDArrayT<float>*)&fStatHist[is]->GetArray();
   }
   //
   // prepare input tree
@@ -369,6 +364,7 @@ void AliTPCDcalibRes::CollectData()
       //
       float q2pt = param->GetParameter()[4];
       if (TMath::Abs(q2pt)>fMaxQ2Pt) continue;
+      float tgLam = param->GetParameter()[3];
       //
       const Float_t *vSec= vecSec->GetMatrixArray();
       const Float_t *vPhi= vecPhi->GetMatrixArray();
@@ -488,15 +484,15 @@ void AliTPCDcalibRes::CollectData()
 	if (!FindVoxelBin(sectID, q2pt, arrX[icl], arrY[icl], arrZ[icl], dts.bvox, voxVars)) continue;
 	dts.dy   = (arrDY[icl]+fMaxDY)*fDeltaYbinI;
 	dts.dz   = (arrDZ[icl]+fMaxDZ)*fDeltaZbinI;
-	tmpTree[sectID]->Fill();
+	fTmpTree[sectID]->Fill();
 	//
 	// fill statistics on distribution within the voxel, last dimension, kVoxV is for Nentries
 	ULong64_t binToFill = GetBin2Fill(fNBProdSt,dts.bvox,kVoxV); // bin of sector stat histo
-	float &binEntries = arrNDstat[sectID]->At(binToFill); // entries in the voxel
+	float &binEntries = fArrNDstat[sectID]->At(binToFill); // entries in the voxel
 	float oldEntries  = binEntries++;
 	float norm        = 1.f/binEntries;
 	for (int iv=kVoxDim;iv--;) {
-	  float &mean = arrNDstat[sectID]->At(binToFill+iv-kVoxV);
+	  float &mean = fArrNDstat[sectID]->At(binToFill+iv-kVoxV);
 	  mean = ( mean*oldEntries + voxVars[iv]) * norm; // account new bin entry in averages calculation
 	}
 	//
@@ -527,11 +523,11 @@ void AliTPCDcalibRes::CollectData()
   //
   // write/close local trees
   for (int is=0;is<kNSect2;is++) {
-    tmpFile[is]->cd();
-    tmpTree[is]->Write("", TObject::kOverwrite);
-    delete tmpTree[is];
-    tmpFile[is]->Close();
-    delete tmpFile[is];
+    fTmpFile[is]->cd();
+    fTmpTree[is]->Write("", TObject::kOverwrite);
+    delete fTmpTree[is];
+    fTmpFile[is]->Close();
+    delete fTmpFile[is];
   }
   //
   printf("Selected %d tracks (with outliers: %d) | %.1f MB read in %d read calls\n",
@@ -665,13 +661,13 @@ void AliTPCDcalibRes::ProcessSectorResiduals(int is, bstat_t &voxStat)
   if (!sectFile) {::Fatal("ProcessSectorResiduals",
 			  "file %s not found",sectFileName.Data());}
   TString treeName = Form("ts%d",is);
-  TTree *tmpTree = (TTree*) sectFile->Get(treeName.Data());
-  if (!tmpTree) {::Fatal("ProcessSectorResiduals",
+  TTree *sectTree = (TTree*) sectFile->Get(treeName.Data());
+  if (!sectTree) {::Fatal("ProcessSectorResiduals",
 			 "tree %s is not found in file %s",treeName.Data(),sectFileName.Data());}
   //
   dts_t dts, *dtsP = &dts; 
-  tmpTree->SetBranchAddress("dts",&dtsP);
-  int npoints = tmpTree->GetEntries();
+  sectTree->SetBranchAddress("dts",&dtsP);
+  int npoints = sectTree->GetEntries();
   //
   THnS *hisY = (THnS*)CreateSectorResidualsHisto(is, fNDeltaYBins, fMaxDY, "DY");
   THnS *hisZ = (THnS*)CreateSectorResidualsHisto(is, fNDeltaZBins, fMaxDZ, "DZ");  
@@ -679,7 +675,7 @@ void AliTPCDcalibRes::ProcessSectorResiduals(int is, bstat_t &voxStat)
   TNDArrayT<short>* ndArrZ = (TNDArrayT<short>*)&hisZ->GetArray();
   //
   for (int ip=0;ip<npoints;ip++) {
-    tmpTree->GetEntry(ip);
+    sectTree->GetEntry(ip);
     UShort_t  binDY = dts.dy;
     UShort_t  binDZ = dts.dz;
     ULong64_t binToFillY = GetBin2Fill(fNBProdDY,dts.bvox,binDY);
@@ -693,7 +689,7 @@ void AliTPCDcalibRes::ProcessSectorResiduals(int is, bstat_t &voxStat)
   hisY->SetEntries(npoints);
   hisZ->SetEntries(npoints);
   //
-  delete tmpTree;
+  delete sectTree;
   sectFile->Close(); // to reconsider: reuse the file
   delete sectFile;
   //
@@ -701,7 +697,7 @@ void AliTPCDcalibRes::ProcessSectorResiduals(int is, bstat_t &voxStat)
   //
   // extract full info about the voxel and write in the tree
   voxStat.bsec = is;
-  ExtractVoxelData(voxStat, ndArrY, ndArrZ, arrNDstat[is]);
+  ExtractVoxelData(voxStat, ndArrY, ndArrZ, fArrNDstat[is]);
 
   // at the moment save histos ...
   TFile* flOut = TFile::Open(Form("residualSect%d.root",is),"update"); // RS shall we dump all sector histos to 1 file?
@@ -1151,7 +1147,7 @@ Bool_t AliTPCDcalibRes::ValidateTrack(int nCl, float q2pt, float *arrX, const fl
 
   Bool_t rejCl[kNPadRows];
   int nRej = CheckResiduals(nCl,arrX,arrDY,arrDZ,arrSectID,rejCl, fNVoisinMA, fMaxStdDevMA);
-  if (float(nRej)/nCl > fMaxRefFrac) return kFALSE;
+  if (float(nRej)/nCl > fMaxRejFrac) return kFALSE;
   //
   // flag outliers
   for (int i=nCl;i--;) if (rejCl[i]) arrX[i] = 1;
@@ -1754,7 +1750,7 @@ void AliTPCDcalibRes::WriteStatHistos()
   // write stat histos
   TString statOutName = Form("%s.root",kStatOut);
   TFile* statOutFile = TFile::Open(statOutName.Data(),"recreate");
-  for (int is=0;is<kNSect2;is++) statHist[is]->Write("", TObject::kOverwrite);
+  for (int is=0;is<kNSect2;is++) fStatHist[is]->Write("", TObject::kOverwrite);
   statOutFile->Close();
   delete statOutFile;
   //
@@ -1768,9 +1764,9 @@ void AliTPCDcalibRes::LoadStatHistos()
   TFile* statOutFile = TFile::Open(statOutName.Data());
   if (!statOutFile) ::Fatal("tstw","LoadStatHistos: failed to read file %s",statOutName.Data()); 
   for (int is=0;is<kNSect2;is++) {
-    statHist[is] = (THnF*) statOutFile->Get(Form("hs%d",is));
-    if (!statHist[is]) ::Fatal("tstw","LoadStatHistos: failed to read secto %d histo from %s",is,statOutName.Data());
-    arrNDstat[is] = (TNDArrayT<float>*)&statHist[is]->GetArray();
+    fStatHist[is] = (THnF*) statOutFile->Get(Form("hs%d",is));
+    if (!fStatHist[is]) ::Fatal("tstw","LoadStatHistos: failed to read secto %d histo from %s",is,statOutName.Data());
+    fArrNDstat[is] = (TNDArrayT<float>*)&fStatHist[is]->GetArray();
   }
   statOutFile->Close();
   delete statOutFile;
@@ -2580,7 +2576,7 @@ Bool_t AliTPCDcalibRes::GetSmoothEstimate(int isect, float x, float p, float z, 
 }
 
 //_____________________________________
-Double_t AliTPCDcalibRes::GetKernelWeight(double* u2vec,int np)
+Double_t AliTPCDcalibRes::GetKernelWeight(double* u2vec,int np) const
 {
   double w = 1;
   if (fKernelType == kEpanechnikovKernel) {
@@ -2690,6 +2686,8 @@ void AliTPCDcalibRes::InitBinning(int nbx, int nby, int nbz)
   fBinDQI  = new Float_t[nxy];
   fBinDQ   = new Float_t[nxy];
   //
+  const float kMaxY2X = TMath::Tan(0.5f*kSecDPhi);
+
   for (int ix=0;ix<fNXBins;ix++) {
     float x = GetX(ix);
     fMaxY2X[ix] = kMaxY2X - kDeadZone/x;
@@ -2821,7 +2819,7 @@ Bool_t AliTPCDcalibRes::FindVoxelBin(int sectID, float q2pt, float x, float y, f
 //
 // This is a special non-meber f-n for cheb. learning
 //
-void trainCorr(int row, float* tzLoc, float* corrLoc)
+void AliTPCDcalibRes::trainCorr(int row, float* tzLoc, float* corrLoc)
 {
   // Cheb. object training f-n: compute correction for the point
   //
@@ -2831,7 +2829,7 @@ void trainCorr(int row, float* tzLoc, float* corrLoc)
   // (row should be sector in 0-35 or 0-71 format)
   static int sector=0;
   if (!tzLoc || !corrLoc) {
-    sector = row%36; 
+    sector = row%AliTPCDcalibRes::kNSect2; 
     printf("training Sector %d\n",sector);
     return;
   }
