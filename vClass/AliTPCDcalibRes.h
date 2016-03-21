@@ -1,5 +1,5 @@
-#ifndef ALITPCDISTORTIONEXTRACTOR_H
-#define ALITPCDISTORTIONEXTRACTOR_H
+#ifndef ALITPCCALIBRES_H
+#define ALITPCCALIBRES_H
 #include <TSystem.h>
 #include <TTree.h>
 #include <TBranch.h>
@@ -17,6 +17,7 @@
 #include <TEnv.h>
 #include <TStopwatch.h>
 #include <TGraphErrors.h>
+#include <TGeoMatrix.h>
 #include "AliExternalTrackParam.h"
 #include "AliTPCcalibAlignInterpolation.h"
 #include "AliGeomManager.h"
@@ -33,6 +34,7 @@ class AliTPCDcalibRes: public TObject
  public:
   enum {kEpanechnikovKernel, kGausianKernel};  // defined kernels
   enum {kNSect=18,kNSect2=2*kNSect,kNROC=4*kNSect,kNPadRows=159, kNRowIROC=63, kNRowOROC1=64, kNRowOROC2=32};
+  enum {kAlignmentBugFixedBit = AliTPCcalibAlignInterpolation::kAlignmentBugFixedBit};
 
   //
   // the voxels are defined in following space
@@ -99,7 +101,7 @@ public:
   void ExtractDistortionsData(TH1F* histo, float est[kNEstPar],float minNorm, 
 			      float fracLTM, float fitNSig);
 
-  void InitForBugFix(const char* ocdb);
+  void InitForBugFix(const char* ocdb="raw://");
   THnF* CreateVoxelStatHisto(int sect);
   THn* CreateSectorResidualsHisto(int sect, int nbDelta,float range, const char* pref);
 
@@ -123,14 +125,41 @@ public:
   Bool_t ExtractVoxelXYZDistortions(const bstat_t voxIQ[kNQBins],bres_t &res, int minStat, 
 				    float maxGChi2, int minYBinsOK);
 
+  void  FixAlignmentBug(int sect, float q2pt, float bz, float& alp, float& x, float &z, float &deltaY, float &deltaZ);
+
+  Bool_t ValidateTrack(int nCl, float q2pt, float *arrX, const float *arrY, const float* arrZ,
+		       const float* arrDY, const float* arrDZ, const int *arrSectID);
+
+  Bool_t CheckTrack(float q2pt, int np, const float *x, const float* y, const float *z, 
+		    const float* resy, const float *resz, const int* sect36);
+  int    CheckResiduals(int np, const float *x, const float *y, const float *z, const int *sec36, Bool_t* kill,
+			int nVois=3,float cut=16.);
+
+//------------------------------------ misc. stat. methods
+
+  void    FitCircle(int np, const float* x, const float* y, 
+		    float &xc, float &yc, float &r2, float* dy=0);
+  void    DiffToMA(int np, const float* x, const float *y, const int winLR, float* diffMA);
+  int     DiffToLocLine(int np, const float* x, const float *y, const int nVoisin, float *diffY);
+  int     DiffToMedLine(int np, const float* x, const float *y, const int nVoisin, float *diffY);
+  float   RoFunc(int np, const float* x, const float* y, float b, float &aa);
+  Float_t SelKthMin(int k, int np, float* arr);
+  void    medFit(int np, const float* x, const float* y, float &a, float &b, float delI=0.f);
+  Bool_t  FitPoly2(const float* x,const float* y, const float* w, int np, float *res, float *err);
+  Bool_t  FitPoly1(const float* x,const float* y, const float* w, int np, float *res, float *err);
+  Bool_t  GetTruncNormMuSig(double a, double b, double &mean, double &sig);
+  void    TruncNormMod(double a, double b, double mu0, double sig0, double &muCf, double &sigCf);
+  Double_t GetLogL(TH1F* histo, int bin0, int bin1, double &mu, double &sig, double &logL0);
+
+//------------------------------------
+
   void FillHoles(int isect, bres_t *sectData, const int fNBProdSectG[2], int minGoodPoints);
   
-  Bool_t FitPoly2(const float* x,const float* y, const float* w, int np, float *res, float *err);
-  Bool_t FitPoly1(const float* x,const float* y, const float* w, int np, float *res, float *err);
 
   Int_t Smooth0(int isect);
   Bool_t GetSmoothEstimate(int isect, float x, float p, float z, float *res, float *deriv);
-  void SetKernelType(int tp, float bwX, float bwP, float bwZ, float scX,float scP,float scZ);
+  void SetKernelType(int tp=kEpanechnikovKernel, float bwX=2.5, float bwP=2.5, float bwZ=2.1, 
+		     float scX=1.f,float scP=1.f,float scZ=1.f);
   
   void CreateCorrectionObject();
   void InitBinning(int nbx, int nby, int nbz);
@@ -158,7 +187,7 @@ public:
   void    FindVoxel(float x, float y2x, float z2x, int &ix,int &ip, int &iz);
   void    FindVoxel(float x, float y2x, float z2x, UChar_t &ix,UChar_t &ip, UChar_t &iz);
   void    GetVoxelCoordinates(int isec, int ix, int ip, int iz,float &x, float &p, float &z);
-  Double_t GetKernelWeight(double u2);
+  Double_t GetKernelWeight(double *u2vec, int np);
   //  Int_t  GetQBin(float tgp, int binX, int binY);
   Int_t  GetQBin(float tgp);
   Long64_t GetBin2Fill(const Long64_t bprod[kVoxHDim],const UChar_t binVox[kVoxDim], UShort_t bVal);
@@ -167,7 +196,7 @@ public:
 
 protected:
   //
-  Bool_t   fInitDone = kFALSE;
+  Bool_t   fInitDone;                               // init flag
   Bool_t   fUseErrInSmoothing;                      // weight kernel by point error
   Bool_t   fSwitchCache;                            // reset the cache when the reading mode is changing
   Bool_t   fFixAlignmentBug;                        // flag to apply the fix
@@ -190,7 +219,17 @@ protected:
   Int_t    fCacheInp;      // input trees cache in MB
   Int_t    fLearnSize;     // event to learn for the cache
   Float_t  fBz;            // B field
-  TString  fResidualList;   // list of residuals tree
+  Bool_t   fDeleteSectorTrees; // delete residuals trees once statistics tree is done
+  TString  fResidualList;  // list of residuals tree
+
+  // ------------------------------Selection/filtering cuts
+  Int_t    fNPrimTracksCut;          // of >0, cut on event multiplicity
+  Float_t  fMinNCl;                  // min number of TPC clusters to consider
+  Float_t  fMaxDevYHelix;            // max-min Y deviation of interpolating track from helix
+  Float_t  fMaxDevZHelix;            // max-min Z deviation of interpolating track from helix
+  Float_t  fNVoisinMA;               // N neighbours for moving average
+  Float_t  fMaxStdDevMA;             // max cluster N std.dev (Y^2+Z^2) wrt moving av. to accept
+  Float_t  fMaxRejFrac;              // max outlier clusters tagged to accept the track
 
   // -------------------------------Binning
   Float_t  fMaxDY;   // max residual in Y
@@ -228,10 +267,11 @@ protected:
 
 
   // ------------------------------Smoothing
-  Int_t    fNMaxNeighb;     // max neighbours to loop for smoothing
-  Int_t    fKernelType;     // kernel type
-  Int_t    fStepKern[kVoxDim] = {0,2,2,4};
-  Float_t  fKernelScaleEdge[kVoxDim] = {1, 1.,1.,1.}; // scaling factor for edge points
+  Int_t    fNMaxNeighb;        // max neighbours to loop for smoothing
+  Int_t    fKernelType;        // kernel type
+  Int_t    fStepKern[kVoxDim]; // N bins to consider with given kernel settings
+  Float_t  fKernelWInv[kVoxDim];      // inverse kernel width in bins
+  Float_t  fKernelScaleEdge[kVoxDim]; // optional scaling factors for kernel width on the edge
 
   Double_t fLastSmoothingRes[kResDim*4];  // result of last kernel minimization
 
@@ -382,17 +422,19 @@ inline Int_t AliTPCDcalibRes::GetY2XBin(float y2x, int ix)
 //________________________________________________________________
 inline Int_t AliTPCDcalibRes::GetZ2XBinExact(float z2x)
 {
-  // get exact z2x bin at given x range
-  float bz = TMath::Abs(z2x)*GetDZ2XI();
+  // get exact z2x bin at given x range (z2x is positive for clusters not changing the side)
+  float bz = z2x*GetDZ2XI();
   if (bz>=fNZ2XBins) return -1;
+  if (bz<0) bz = 0; // to account for clusters which moved to wrong side
   return int(bz);
 }
 
 //________________________________________________________________
 inline Int_t AliTPCDcalibRes::GetZ2XBin(float z2x) 
 {
-  // get closest z2x bin
-  int bz = TMath::Abs(z2x)*GetDZ2XI();
+  // get closest z2x bin (z2x is positive for clusters not changing the side)
+  int bz = z2x*GetDZ2XI();
+  if (bz<0) bz = 0; // to account for clusters which moved to wrong side
   return bz<fNZ2XBins ? bz : fNZ2XBins-1;
 }
 
