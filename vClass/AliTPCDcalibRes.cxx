@@ -1,31 +1,31 @@
-#include "AliTPCDistortionExtraction.h"
+#include "AliTPCDcalibRes.h"
 
 
-const char* AliTPCDistortionExtraction::kVoxName[kVoxDim] = {"tgSlp","y2x","x","z2x"};
-const char* AliTPCDistortionExtraction::kResName[kResDim] = {"dX","dY","dZ"};
-const char* AliTPCDistortionExtraction::kEstName[kNEstPar] = {
+const char* AliTPCDcalibRes::kVoxName[kVoxDim] = {"tgSlp","y2x","x","z2x"};
+const char* AliTPCDcalibRes::kResName[kResDim] = {"dX","dY","dZ"};
+const char* AliTPCDcalibRes::kEstName[kNEstPar] = {
   "Nrm","Mean","Sig","Max",
   "MeanL","MeanEL","SigL","SigEL",
   "NormG","MeanG","MeanEG","SigG","SigEG","Chi2G"};
 
-const float AliTPCDistortionExtraction::kSecDPhi=20.f*TMath::DegToRad();
-const float AliTPCDistortionExtraction::kSecDPhiH = AliTPCDistortionExtraction::kSecDPhi*0.5f;
-const float AliTPCDistortionExtraction::kMaxY2X = TMath::Tan(kSecDPhiH);
-const float AliTPCDistortionExtraction::kMinX = 85.0f;
-const float AliTPCDistortionExtraction::kMaxX = 246.0f;
-const float AliTPCDistortionExtraction::kMaxZ2X = 1.0f;
-const float AliTPCDistortionExtraction::kZLim = 250.0f;
-const char* AliTPCDistortionExtraction::kTmpFileName  = "tmpDeltaSect";
-const char* AliTPCDistortionExtraction::kStatOut      = "voxelStat";
-const char* AliTPCDistortionExtraction::kResOut       = "voxelRes";
-const char* AliTPCDistortionExtraction::kDriftFileName= "fitDrift";
-const float AliTPCDistortionExtraction::kDeadZone = 1.5;
-const int   AliTPCDistortionExtraction::kNQBins = 4;
-const ULong64_t AliTPCDistortionExtraction::kMByte = 1024LL*1024LL;
-const Float_t AliTPCDistortionExtraction::kZeroK = 1e-6;
+const float AliTPCDcalibRes::kSecDPhi=20.f*TMath::DegToRad();
+const float AliTPCDcalibRes::kSecDPhiH = AliTPCDcalibRes::kSecDPhi*0.5f;
+const float AliTPCDcalibRes::kMaxY2X = TMath::Tan(kSecDPhiH);
+const float AliTPCDcalibRes::kMinX = 85.0f;
+const float AliTPCDcalibRes::kMaxX = 246.0f;
+const float AliTPCDcalibRes::kMaxZ2X = 1.0f;
+const float AliTPCDcalibRes::kZLim = 250.0f;
+const char* AliTPCDcalibRes::kTmpFileName  = "tmpDeltaSect";
+const char* AliTPCDcalibRes::kStatOut      = "voxelStat";
+const char* AliTPCDcalibRes::kResOut       = "voxelRes";
+const char* AliTPCDcalibRes::kDriftFileName= "fitDrift";
+const float AliTPCDcalibRes::kDeadZone = 1.5;
+const int   AliTPCDcalibRes::kNQBins = 4;
+const ULong64_t AliTPCDcalibRes::kMByte = 1024LL*1024LL;
+const Float_t AliTPCDcalibRes::kZeroK = 1e-6;
 
 
-const Float_t AliTPCDistortionExtraction::kTPCRowX[AliTPCDistortionExtraction::kNPadRows] = { // pad-row center X
+const Float_t AliTPCDcalibRes::kTPCRowX[AliTPCDcalibRes::kNPadRows] = { // pad-row center X
   85.225, 85.975, 86.725, 87.475, 88.225, 88.975, 89.725, 90.475, 91.225, 91.975, 92.725, 93.475, 94.225, 94.975, 95.725,
   96.475, 97.225, 97.975, 98.725, 99.475,100.225,100.975,101.725,102.475,103.225,103.975,104.725,105.475,106.225,106.975,
   107.725,108.475,109.225,109.975,110.725,111.475,112.225,112.975,113.725,114.475,115.225,115.975,116.725,117.475,118.225,
@@ -38,7 +38,7 @@ const Float_t AliTPCDistortionExtraction::kTPCRowX[AliTPCDistortionExtraction::k
   211.350,212.850,214.350,215.850,217.350,218.850,220.350,221.850,223.350,224.850,226.350,227.850,229.350,230.850,232.350,
   233.850,235.350,236.850,238.350,239.850,241.350,242.850,244.350,245.850
 };
-const Float_t AliTPCDistortionExtraction::kTPCRowDX[AliTPCDistortionExtraction::kNPadRows] = { // pad-row pitch in X
+const Float_t AliTPCDcalibRes::kTPCRowDX[AliTPCDcalibRes::kNPadRows] = { // pad-row pitch in X
   0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,
   0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,
   0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,0.750,
@@ -50,7 +50,7 @@ const Float_t AliTPCDistortionExtraction::kTPCRowDX[AliTPCDistortionExtraction::
 };
 
 
-AliTPCDistortionExtraction::AliTPCDistortionExtraction( ) : 
+AliTPCDcalibRes::AliTPCDcalibRes( ) : 
   
   fInitDone(kFALSE)
   ,fUseErrInSmoothing(kTRUE)
@@ -154,7 +154,7 @@ AliTPCDistortionExtraction::AliTPCDistortionExtraction( ) :
 //==================================================================================
 
 
-void AliTPCDistortionExtraction::Init(int run
+void AliTPCDcalibRes::Init(int run
 				      ,const char * residualList
 				      ,Long64_t tmin
 				      ,Long64_t tmax
@@ -240,7 +240,7 @@ void AliTPCDistortionExtraction::Init(int run
 }
 
 //_____________________________________________________
-void AliTPCDistortionExtraction::CollectData() 
+void AliTPCDcalibRes::CollectData() 
 {
   // process residual trees and write local binned data trees
   const float kEps = 1e-6;
@@ -466,7 +466,7 @@ void AliTPCDistortionExtraction::CollectData()
 }
 
 //________________________________________________
-void AliTPCDistortionExtraction::ProcessResiduals()
+void AliTPCDcalibRes::ProcessResiduals()
 {
   // project local trees, extract distortions
   if (!fInitDone) {printf("Init not done\n"); return;}
@@ -508,7 +508,7 @@ void AliTPCDistortionExtraction::ProcessResiduals()
 }
 
 //_________________________________
-void  AliTPCDistortionExtraction::WriteVoxelDefinitions()
+void  AliTPCDcalibRes::WriteVoxelDefinitions()
 {
   // Store voxel boundaries
   if (!fInitDone) {printf("Init not done\n"); return;}
@@ -570,7 +570,7 @@ void  AliTPCDistortionExtraction::WriteVoxelDefinitions()
 
 
 //_________________________________________________
-void AliTPCDistortionExtraction::ProcessSectorResiduals(int is, bstat_t &voxStat)
+void AliTPCDcalibRes::ProcessSectorResiduals(int is, bstat_t &voxStat)
 {
   // process residuals for single sector and store in the tree
   //
@@ -637,7 +637,7 @@ void AliTPCDistortionExtraction::ProcessSectorResiduals(int is, bstat_t &voxStat
 }
 
 //_________________________________________________
-void AliTPCDistortionExtraction::ExtractVoxelData(bstat_t &stat, 
+void AliTPCDcalibRes::ExtractVoxelData(bstat_t &stat, 
 						  const TNDArrayT<short>* harrY, 
 						  const TNDArrayT<short>* harrZ,
 						  const TNDArrayT<float>* harrStat)
@@ -678,7 +678,7 @@ void AliTPCDistortionExtraction::ExtractVoxelData(bstat_t &stat,
 }
 
 //______________________________________________________________________________
-void AliTPCDistortionExtraction::ExtractDistortionsData(TH1F* histo, float est[kNEstPar], 
+void AliTPCDcalibRes::ExtractDistortionsData(TH1F* histo, float est[kNEstPar], 
 							float minNorm, float fracLTM, float fitNSig)
 {
   const float kMinEntries=30, kUseLLFrom=20;
@@ -740,7 +740,7 @@ void AliTPCDistortionExtraction::ExtractDistortionsData(TH1F* histo, float est[k
 
 
 //_________________________________________________
-void AliTPCDistortionExtraction::InitForBugFix(const char* ocdb)
+void AliTPCDcalibRes::InitForBugFix(const char* ocdb)
 {
   ::Info(" AliTPCcalibAlignInterpolation::InitForBugFix","Alignment bug fix is requested\n");
   //
@@ -768,7 +768,7 @@ void AliTPCDistortionExtraction::InitForBugFix(const char* ocdb)
 
 
 //___________________________________________________________________________
-THnF* AliTPCDistortionExtraction::CreateVoxelStatHisto(int sect)
+THnF* AliTPCDcalibRes::CreateVoxelStatHisto(int sect)
 {
   // prepare histogram to store the means of distributions within the voxel
 
@@ -809,7 +809,7 @@ THnF* AliTPCDistortionExtraction::CreateVoxelStatHisto(int sect)
 }
 
 //___________________________________________________________________________
-THn* AliTPCDistortionExtraction::CreateSectorResidualsHisto(int sect, int nbDelta,float range, const char* pref)
+THn* AliTPCDcalibRes::CreateSectorResidualsHisto(int sect, int nbDelta,float range, const char* pref)
 {
   // prepare histogram to store the residuals withing the sector
 
@@ -854,7 +854,7 @@ THn* AliTPCDistortionExtraction::CreateSectorResidualsHisto(int sect, int nbDelt
 
 
 //_________________________________________
-void AliTPCDistortionExtraction::LoadVDrift()
+void AliTPCDcalibRes::LoadVDrift()
 {
   // load vdrift params
   fVDriftGraph = 0;
@@ -890,7 +890,7 @@ void AliTPCDistortionExtraction::LoadVDrift()
 }
 
 //_________________________________________
-float AliTPCDistortionExtraction::GetDriftCorrection(float z, float x, float phi, int rocID)
+float AliTPCDcalibRes::GetDriftCorrection(float z, float x, float phi, int rocID)
 {
   // apply vdrift correction
   int side = ((rocID/kNSect)&0x1) ? -1:1; // C:A
@@ -910,7 +910,7 @@ float AliTPCDistortionExtraction::GetDriftCorrection(float z, float x, float phi
 }
 
 //_____________________________________________________
-float AliTPCDistortionExtraction::tgpXY(float x, float y, float q2p, float bz)
+float AliTPCDcalibRes::tgpXY(float x, float y, float q2p, float bz)
 {
   // get the tg of primary track inclination wrt padrow given
   // that it was registered at X,Y sector coordinates
@@ -938,7 +938,7 @@ float AliTPCDistortionExtraction::tgpXY(float x, float y, float q2p, float bz)
 //=========================================================================
 //
 //___________________________________________________________________
-void AliTPCDistortionExtraction::WriteStatHistos()
+void AliTPCDcalibRes::WriteStatHistos()
 {
   // write stat histos
   TString statOutName = Form("%s.root",kStatOut);
@@ -950,7 +950,7 @@ void AliTPCDistortionExtraction::WriteStatHistos()
 }
 
 //___________________________________________________________________
-void AliTPCDistortionExtraction::LoadStatHistos()
+void AliTPCDcalibRes::LoadStatHistos()
 {
   // load bin stat histos
   TString statOutName = Form("%s.root",kStatOut);
@@ -967,7 +967,7 @@ void AliTPCDistortionExtraction::LoadStatHistos()
 }
 
 //___________________________________________________________________
-void AliTPCDistortionExtraction::WriteResTree()
+void AliTPCDcalibRes::WriteResTree()
 {
   // output file for results tree
   TStopwatch sw;
@@ -1042,7 +1042,7 @@ void AliTPCDistortionExtraction::WriteResTree()
 //=========================================================================
 
 //___________________________________________________________________________________
-float AliTPCDistortionExtraction::ExtractResidualHisto(const TNDArrayT<short>* harr, const Long64_t bprod[kVoxHDim], 
+float AliTPCDcalibRes::ExtractResidualHisto(const TNDArrayT<short>* harr, const Long64_t bprod[kVoxHDim], 
 						       const UChar_t vox[kVoxDim], TH1F* dest)
 {
   // extract residuals for the voxel from THn to 1D histo
@@ -1058,7 +1058,7 @@ float AliTPCDistortionExtraction::ExtractResidualHisto(const TNDArrayT<short>* h
 }
 
 //___________________________________________________________________________________
-float AliTPCDistortionExtraction::ExtractResidualHisto(const TNDArrayT<short>* harr, const Long64_t bprod[kVoxHDim], 
+float AliTPCDcalibRes::ExtractResidualHisto(const TNDArrayT<short>* harr, const Long64_t bprod[kVoxHDim], 
 						       const UChar_t voxMin[kVoxDim], const UChar_t voxMax[kVoxDim], TH1F* dest)
 {
   // extract residuals for the voxel from THn to 1D histo
@@ -1084,7 +1084,7 @@ float AliTPCDistortionExtraction::ExtractResidualHisto(const TNDArrayT<short>* h
 }
 
 //___________________________________________________________________________________
-TH1F* AliTPCDistortionExtraction::ExtractResidualHisto(Bool_t y, int sect, const UChar_t vox[kVoxDim])
+TH1F* AliTPCDcalibRes::ExtractResidualHisto(Bool_t y, int sect, const UChar_t vox[kVoxDim])
 {
   // create Y or Z residuals for the voxel in sector sect,  from THn to 1D histo
   TString fln = Form("residualSect%d.root",sect);
@@ -1108,7 +1108,7 @@ TH1F* AliTPCDistortionExtraction::ExtractResidualHisto(Bool_t y, int sect, const
 }
 
 //___________________________________________________________________________________
-TH1F* AliTPCDistortionExtraction::ExtractResidualHisto(Bool_t y, int sect, const UChar_t vox[kVoxDim], const UChar_t vox1[kVoxDim])
+TH1F* AliTPCDcalibRes::ExtractResidualHisto(Bool_t y, int sect, const UChar_t vox[kVoxDim], const UChar_t vox1[kVoxDim])
 {
   // create Y or Z residuals for the voxel in sector sect,  from THn to 1D histo
   TString fln = Form("residualSect%d.root",sect);
@@ -1134,7 +1134,7 @@ TH1F* AliTPCDistortionExtraction::ExtractResidualHisto(Bool_t y, int sect, const
 }
 
 //__________________________________________________________________
-void AliTPCDistortionExtraction::ExtractXYZDistortions()
+void AliTPCDcalibRes::ExtractXYZDistortions()
 {
   if (!fInitDone) {printf("Init not done\n"); return;}
 
@@ -1206,7 +1206,7 @@ void AliTPCDistortionExtraction::ExtractXYZDistortions()
 }
 
 //_____________________________________________
-Bool_t AliTPCDistortionExtraction::ExtractVoxelXYZDistortions(const bstat_t voxIQ[kNQBins], 
+Bool_t AliTPCDcalibRes::ExtractVoxelXYZDistortions(const bstat_t voxIQ[kNQBins], 
 							      bres_t &res, int minStat, 
 							      float maxGChi2, int minYBinsOK)
 {
@@ -1298,7 +1298,7 @@ Bool_t AliTPCDistortionExtraction::ExtractVoxelXYZDistortions(const bstat_t voxI
 //
 //=========================================================================
 //________________________________
-void AliTPCDistortionExtraction::FillHoles(int isect, bres_t *sectData, const int fNBProdSectG[2], int minGoodPoints)
+void AliTPCDcalibRes::FillHoles(int isect, bres_t *sectData, const int fNBProdSectG[2], int minGoodPoints)
 {
   /// RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR DELETE?
   // fill holes within 1 sector
@@ -1399,7 +1399,7 @@ void AliTPCDistortionExtraction::FillHoles(int isect, bres_t *sectData, const in
 }
 
 //_____________________________________________________
-Bool_t AliTPCDistortionExtraction::FitPoly2(const float* x,const float* y, const float* w, int np, float *res, float *err)
+Bool_t AliTPCDcalibRes::FitPoly2(const float* x,const float* y, const float* w, int np, float *res, float *err)
 {
   // poly2 fitter
   if (np<3) return kFALSE; // no enough points
@@ -1450,7 +1450,7 @@ Bool_t AliTPCDistortionExtraction::FitPoly2(const float* x,const float* y, const
 }
 
 //_____________________________________________________
-Bool_t AliTPCDistortionExtraction::FitPoly1(const float* x,const float* y, const float* w, int np, float *res, float *err)
+Bool_t AliTPCDcalibRes::FitPoly1(const float* x,const float* y, const float* w, int np, float *res, float *err)
 {
   // poly1 fitter
   if (np<2) return kFALSE; // no enough points
@@ -1479,7 +1479,7 @@ Bool_t AliTPCDistortionExtraction::FitPoly1(const float* x,const float* y, const
 }
 
 //________________________________
-Int_t AliTPCDistortionExtraction::Smooth0(int isect)
+Int_t AliTPCDcalibRes::Smooth0(int isect)
 {
   // apply linear regression kernel smoother 
   int cnt = 0;
@@ -1500,7 +1500,7 @@ Int_t AliTPCDistortionExtraction::Smooth0(int isect)
 }
 
 //________________________________________________________________
-Bool_t AliTPCDistortionExtraction::GetSmoothEstimate(int isect, float x, float p, float z, float *res, float *deriv)
+Bool_t AliTPCDcalibRes::GetSmoothEstimate(int isect, float x, float p, float z, float *res, float *deriv)
 {
   // get smooth estimate for point in sector coordinates (x,y/x,z/x)
   // smoothing results also saved in the fLastSmoothingRes (allow derivative calculation)
@@ -1790,7 +1790,7 @@ void SetKernelType(int tp, float bwX, float bwP, float bwZ, float scX,float scP,
 //=========================================================================
 
 //_____________________________________________
-void AliTPCDistortionExtraction::CreateCorrectionObject()
+void AliTPCDcalibRes::CreateCorrectionObject()
 {
   // create correction object for given time slice
 
@@ -1812,7 +1812,7 @@ void AliTPCDistortionExtraction::CreateCorrectionObject()
 }
 
 //________________________________________________________________
-void AliTPCDistortionExtraction::InitBinning(int nbx, int nby, int nbz)
+void AliTPCDcalibRes::InitBinning(int nbx, int nby, int nbz)
 {
   // initialize binning structures
   //
@@ -1876,7 +1876,7 @@ void AliTPCDistortionExtraction::InitBinning(int nbx, int nby, int nbz)
 }
 
 //________________________________________________________________
-Int_t AliTPCDistortionExtraction::GetXBin(float x) 
+Int_t AliTPCDcalibRes::GetXBin(float x) 
 {
   // convert X to bin ID, following pad row widths
   if (fUniformBins[kVoxX]) {
@@ -1911,7 +1911,7 @@ Int_t AliTPCDistortionExtraction::GetXBin(float x)
 }
 
 //________________________________________________________________
-Int_t AliTPCDistortionExtraction::GetRowID(float x)
+Int_t AliTPCDcalibRes::GetRowID(float x)
 {
   // return row ID
   int ix;
@@ -1936,7 +1936,7 @@ Int_t AliTPCDistortionExtraction::GetRowID(float x)
 }
 
 //_____________________________________________________
-Bool_t AliTPCDistortionExtraction::FindVoxelBin(int sectID, float q2pt, float x, float y, float z, 
+Bool_t AliTPCDcalibRes::FindVoxelBin(int sectID, float q2pt, float x, float y, float z, 
 						UChar_t bin[kVoxHDim],float voxVars[kVoxHDim])
 {
   // define voxel variables and bin

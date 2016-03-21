@@ -28,7 +28,7 @@
 #include "AliSymMatrix.h"
 #include "AliTPCChebCorr.h"
 
-class AliTPCDistortionExtraction: public TObject
+class AliTPCDcalibRes: public TObject
 {
  public:
   enum {kEpanechnikovKernel, kGausianKernel};  // defined kernels
@@ -84,8 +84,8 @@ class AliTPCDistortionExtraction: public TObject
 
 public:
 
-  AliTPCDistortionExtraction();
-  virtual ~AliTPCDistortionExtraction();
+  AliTPCDcalibRes();
+  virtual ~AliTPCDcalibRes();
   
   void Init(int run,const char * residualList,Long64_t tmin,Long64_t tmax,float maxDY,float maxDZ
 	    ,float maxQ2Pt,int nY2XBins,int nZ2XBins,int nXBins,int nDeltaBinsY,int nDeltaBinsZ
@@ -289,11 +289,11 @@ protected:
   static const Float_t kTPCRowX[]; // X of the pad-row
   static const Float_t kTPCRowDX[]; // pitch in X
 
-  ClassDef(AliTPCDistortionExtraction,1);
+  ClassDef(AliTPCDcalibRes,1);
 };
 
 //________________________________________________________________
-inline Int_t AliTPCDistortionExtraction::GetXBinExact(float x) 
+inline Int_t AliTPCDcalibRes::GetXBinExact(float x) 
 {
   // convert X to bin ID, following pad row widths
   if (fUniformBins[kVoxX]) {
@@ -304,63 +304,63 @@ inline Int_t AliTPCDistortionExtraction::GetXBinExact(float x)
 }
 
 //________________________________________________________________
-inline Float_t AliTPCDistortionExtraction::GetY2X(int ix, int iy)
+inline Float_t AliTPCDcalibRes::GetY2X(int ix, int iy)
 {
   // get Y2X bin center for ix,iy bin
   return (0.5f+iy)*fDY2X[ix] - fMaxY2X[ix];
 }
 
 //________________________________________________________________
-inline Float_t AliTPCDistortionExtraction::GetY2XLow(int ix, int iy)
+inline Float_t AliTPCDcalibRes::GetY2XLow(int ix, int iy)
 {
   // get Y2X bin low edge for ix,iy bin
   return iy*fDY2X[ix] - fMaxY2X[ix];
 }
 
 //________________________________________________________________
-inline Float_t AliTPCDistortionExtraction::GetDY2X(int ix)
+inline Float_t AliTPCDcalibRes::GetDY2X(int ix)
 {
   // get Y2X bin size value for ix bin
   return fDY2X[ix];
 }
 
 //________________________________________________________________
-inline Float_t AliTPCDistortionExtraction::GetDY2XI(int ix)
+inline Float_t AliTPCDcalibRes::GetDY2XI(int ix)
 {
   // get Y2X inverse bin size  for ix bin
   return fDY2XI[ix];
 }
 
 //________________________________________________________________
-inline Float_t AliTPCDistortionExtraction::GetX(int i)
+inline Float_t AliTPCDcalibRes::GetX(int i)
 {
   // low edge of i-th X bin
   return (fUniformBins[kVoxX]) ? kMinX+(0.5+i)*fDX : kTPCRowX[i];
 }
 
 //________________________________________________________________
-inline Float_t AliTPCDistortionExtraction::GetXLow(int i)
+inline Float_t AliTPCDcalibRes::GetXLow(int i)
 {
   // low edge of i-th X bin
   return fUniformBins[kVoxX] ? kMinX+i*fDX : kTPCRowX[i] - 0.5*kTPCRowDX[i];
 }
 
 //________________________________________________________________
-inline Float_t AliTPCDistortionExtraction::GetDX(int i)
+inline Float_t AliTPCDcalibRes::GetDX(int i)
 {
   // width of i-th X bin
   return fUniformBins[kVoxX] ? fDX : kTPCRowDX[i];
 }
 
 //________________________________________________________________
-inline Float_t AliTPCDistortionExtraction::GetDXI(int i)
+inline Float_t AliTPCDcalibRes::GetDXI(int i)
 {
   // inverse width of i-th X bin
   return (fUniformBins[kVoxX]) ? fDXI : 1.f/kTPCRowDX[i];
 }
 
 //________________________________________________________________
-inline Int_t AliTPCDistortionExtraction::GetY2XBinExact(float y2x, int ix) 
+inline Int_t AliTPCDcalibRes::GetY2XBinExact(float y2x, int ix) 
 {
   // get exact y2x bin at given x range
   float bf = ( y2x + fMaxY2X[ix] ) * GetDY2XI(ix);
@@ -370,7 +370,7 @@ inline Int_t AliTPCDistortionExtraction::GetY2XBinExact(float y2x, int ix)
 }
 
 //________________________________________________________________
-inline Int_t AliTPCDistortionExtraction::GetY2XBin(float y2x, int ix) 
+inline Int_t AliTPCDcalibRes::GetY2XBin(float y2x, int ix) 
 {
   // get closest y2x bin at given x range
   int bf = ( y2x + fMaxY2X[ix] ) * GetDY2XI(ix);
@@ -380,7 +380,7 @@ inline Int_t AliTPCDistortionExtraction::GetY2XBin(float y2x, int ix)
 }
 
 //________________________________________________________________
-inline Int_t AliTPCDistortionExtraction::GetZ2XBinExact(float z2x)
+inline Int_t AliTPCDcalibRes::GetZ2XBinExact(float z2x)
 {
   // get exact z2x bin at given x range
   float bz = TMath::Abs(z2x)*GetDZ2XI();
@@ -389,7 +389,7 @@ inline Int_t AliTPCDistortionExtraction::GetZ2XBinExact(float z2x)
 }
 
 //________________________________________________________________
-inline Int_t AliTPCDistortionExtraction::GetZ2XBin(float z2x) 
+inline Int_t AliTPCDcalibRes::GetZ2XBin(float z2x) 
 {
   // get closest z2x bin
   int bz = TMath::Abs(z2x)*GetDZ2XI();
@@ -404,28 +404,28 @@ inline Float_t GetZ2X(int iz)
 }
 
 //________________________________________________________________
-inline Float_t AliTPCDistortionExtraction::GetZ2XLow(int iz)
+inline Float_t AliTPCDcalibRes::GetZ2XLow(int iz)
 {
   // get Z2X bin low edge for iz !! bin positive
   return iz*GetDZ2X();
 }
 
 //________________________________________________________________
-inline Float_t AliTPCDistortionExtraction::GetDZ2X()
+inline Float_t AliTPCDcalibRes::GetDZ2X()
 {
   // get Z2X bin size value
   return fDZ2X;
 }
 
 //________________________________________________________________
-inline Float_t AliTPCDistortionExtraction::GetDZ2XI()
+inline Float_t AliTPCDcalibRes::GetDZ2XI()
 {
   // get Z2X inverse bin size
   return fDZ2XI;
 }
 
 //_____________________________________
-inline void AliTPCDistortionExtraction::FindVoxel(float x, float y2x, float z2x, int &ix, int &ip, int &iz)
+inline void AliTPCDcalibRes::FindVoxel(float x, float y2x, float z2x, int &ix, int &ip, int &iz)
 {
   // calculate voxel center sector coordinates (wrt sector)
   ix = GetXBin(x);
@@ -435,7 +435,7 @@ inline void AliTPCDistortionExtraction::FindVoxel(float x, float y2x, float z2x,
 }
 
 //_____________________________________
-inline void AliTPCDistortionExtraction::FindVoxel(float x, float y2x, float z2x, UChar_t &ix, UChar_t &ip, UChar_t &iz)
+inline void AliTPCDcalibRes::FindVoxel(float x, float y2x, float z2x, UChar_t &ix, UChar_t &ip, UChar_t &iz)
 {
   // calculate voxel center sector coordinates (wrt sector)
   ix = GetXBin(x);
@@ -445,7 +445,7 @@ inline void AliTPCDistortionExtraction::FindVoxel(float x, float y2x, float z2x,
 }
 
 //_____________________________________
-inline void AliTPCDistortionExtraction::GetVoxelCoordinates(int isec, int ix, int ip, int iz, float &x, float &p, float &z)
+inline void AliTPCDcalibRes::GetVoxelCoordinates(int isec, int ix, int ip, int iz, float &x, float &p, float &z)
 {
   // calculate voxel center sector coordinates (wrt sector)
   x = GetX(ix);
@@ -455,7 +455,7 @@ inline void AliTPCDistortionExtraction::GetVoxelCoordinates(int isec, int ix, in
 }
 
 //_____________________________________
-inline Double_t AliTPCDistortionExtraction::GetKernelWeight(double u2)
+inline Double_t AliTPCDcalibRes::GetKernelWeight(double u2)
 {
   if (fKernelType == kEpanechnikovKernel) {
     if (u2>1) return 0.;
@@ -470,7 +470,7 @@ inline Double_t AliTPCDistortionExtraction::GetKernelWeight(double u2)
 }
 
 //_____________________________________________________
-inline Int_t AliTPCDistortionExtraction::GetQBin(float q2pt)
+inline Int_t AliTPCDcalibRes::GetQBin(float q2pt)
 {
   // get binID in track Q variable (tg of inclination) for given X,Y bin
   //
@@ -482,7 +482,7 @@ inline Int_t AliTPCDistortionExtraction::GetQBin(float q2pt)
 //_____________________________________________________
 
 /*
-inline Int_t AliTPCDistortionExtraction::GetQBin(float tgp, int binX, int binY)
+inline Int_t AliTPCDcalibRes::GetQBin(float tgp, int binX, int binY)
 {
   // get binID in track Q variable (tg of inclination) for given X,Y bin
   //
@@ -494,7 +494,7 @@ inline Int_t AliTPCDistortionExtraction::GetQBin(float tgp, int binX, int binY)
 */
 
 //_____________________________________________________
-inline Long64_t AliTPCDistortionExtraction::GetBin2Fill(const Long64_t bprod[kVoxHDim],
+inline Long64_t AliTPCDcalibRes::GetBin2Fill(const Long64_t bprod[kVoxHDim],
 							const UChar_t binVox[kVoxDim], UShort_t bVal) 
 {
   // TH5 bin calculation, bval is the last dimention binID
@@ -504,14 +504,14 @@ inline Long64_t AliTPCDistortionExtraction::GetBin2Fill(const Long64_t bprod[kVo
 }
 
 //_____________________________________________________
-inline Int_t AliTPCDistortionExtraction::GetVoxGBin(int ix, int ip, int iz) 
+inline Int_t AliTPCDcalibRes::GetVoxGBin(int ix, int ip, int iz) 
 {
   // index of geometrix voxel (no Q info)
   return iz+fNBProdSectG[1]*ip+fNBProdSectG[0]*ix;
 }
 
 //_____________________________________________________
-inline Int_t AliTPCDistortionExtraction::GetVoxGBin(UChar_t bvox[kVoxDim]) 
+inline Int_t AliTPCDcalibRes::GetVoxGBin(UChar_t bvox[kVoxDim]) 
 {
   // index of geometrix voxel (no Q info)
   return bvox[kVoxZ]+fNBProdSectG[1]*bvox[kVoxF]+fNBProdSectG[0]*bvox[kVoxX];
