@@ -111,11 +111,12 @@ const Float_t kMaxDeltaClusterCut=0.5;    // maximal delta(cm) between the clust
 // My settings
 Float_t  fMinNCl = 30;
 Float_t  fMaxDevYHelix = 0.3;
-Float_t  fMaxDevZHelix = 0.3; // !!! VDrift calib. screas up the Z fit, 0.3 w/o vdrift
+Float_t  fMaxDevZHelix = 0.3;
 Float_t  fNVoisinMA = 3;
+Float_t  fNVoisinMALong = 15;
 Float_t  fMaxStdDevMA = 25.0;
+Float_t  fMaxRMSLong = 0.8;  // max RMS of cleaned residuals wrt its fNVoisinMALong moving average
 Float_t  fMaxRefFrac = 0.15;
-
 
 //
 struct dts_t
@@ -285,11 +286,11 @@ Bool_t CompareToHelix(int nCl, const float *x, const float *y, const float *z,
 		      float &q2ptFit, float &tgLamFit, float* tgSlope,
 		      float *resHelixY, float *resHelixZ, float maxDevY, float maxDevZ);
 
-int CheckResiduals(int np, const float *x, const float *y, const float *z, const int *sec36, Bool_t* kill,
-		   int nVois=3,float cut=16.);
+int CheckResiduals(int np, const float *x, const float *y, const float *z, const int *sec36, 
+		   Bool_t* kill,float &rmsLongMA,int nVois=3,float cut=16.,int nVoisLong=15);
 void FitCircle(int np, const float* x, const float* y, 
-	       float &xc, float &yc, float &r2, float* dy=0);
-void DiffToMA(int np, const float* x, const float *y, const int winLR, float* diffMA);
+	       double &xc, double &yc, double &r, float* dy=0);
+void DiffToMA(int np, const float *y, const int winLR, float* diffMA);
 int DiffToLocLine(int np, const float* x, const float *y, const int nVoisin, float *diffY);
 int DiffToMedLine(int np, const float* x, const float *y, const int nVoisin, float *diffY);
 //------------------------------------
@@ -331,7 +332,7 @@ float ExtractResidualHisto(const TNDArrayT<short>* harr, const Long64_t bprod[kV
 float ExtractResidualHisto(const TNDArrayT<short>* harr, const Long64_t bprod[kVoxHDim], 
 			   const UChar_t voxMin[kVoxDim], const UChar_t voxMax[kVoxDim], TH1F* dest);
 
-void ExtractDistortionsData(TH1F* histo, float est[kNEstPar], float minNorm=5.f, float fracLTM=0.7f);
+void ExtractDistortionsData(TH1F* histo, float est[kNEstPar], const UChar_t vox[kVoxDim], float minNorm=5.f, float fracLTM=0.7f);
 Bool_t GetTruncNormMuSig(double a, double b, double &mean, double &sig);
 void TruncNormMod(double a, double b, double mu0, double sig0, double &muCf, double &sigCf);
 Double_t GetLogL(TH1F* histo, int bin0, int bin1, double &mu, double &sig, double &logL0);
@@ -667,7 +668,8 @@ void CollectData()
     //
     int arrSectID[kNPadRows], nCl=0;
     //
-    Bool_t lastReadMatched = kFALSE; // reset the cache when swithching between the timeStamp and Event read modes
+    // reset the cache when swithching between the timeStamp and Event read modes
+    Bool_t lastReadMatched = kFALSE; 
     for (int itr=0;itr<nTracks;itr++) {
       nBytesReadChunk += brTime->GetEntry(itr);
       if (timeStamp<fTMin  || timeStamp>fTMax) {
@@ -733,11 +735,13 @@ void CollectData()
 	//
 	nCl++;
       }
-      // fit track coordinates by helix to get interpolated track q/pt: more precise than the distorted TPC q/pt
+      // fit track coordinates by helix to get interpolated track q/pt: 
+      // more precise than the distorted TPC q/pt
       if (nCl<fMinNCl) continue;
       //
       ntrSelChunkWO++;
       //
+      float q2ptTPC = q2pt;
       Bool_t resH = CompareToHelix(nCl, arrX, arrDY, arrZTr, arrPhi, arrSectID,
 				   q2pt,tgLam,tgSlope,
 				   residHelixY,residHelixZ,
@@ -804,6 +808,12 @@ void CollectData()
 
       ntrSelChunk++;
 
+      //int qb0 = GetQBin(q2ptTPC);
+      //int qb1 = GetQBin(q2pt);
+      //if (qb0!=qb1) {
+      //printf("Diff at ev %d: TPC %+.3f->%d Fit: %.3f->%d, ncl:%3d |S:%2d-%2d\n",
+      //  itr,q2ptTPC,qb0, q2pt,qb1,nCl,arrSectID[0],arrSectID[nCl-1]);
+      //}
       // now fill the local trees and statistics
       float voxVars[kVoxHDim]={0}; // voxel variables (unbinned)
       for (int icl=nCl;icl--;) {
@@ -1074,12 +1084,12 @@ void ExtractVoxelData(bstat_t &stat, const TNDArrayT<short>* harrY, const TNDArr
 	for (int i=kVoxDim;i--;) bvox1[i] = stat.bvox[i];
 	bvox1[kVoxQ] = kNQBins-1;
 	ExtractResidualHisto(harrZ,fNBProdDZ,stat.bvox,bvox1,fHDelZ); // integrate over Q bins
-	ExtractDistortionsData(fHDelZ, stat.distZ);
+	ExtractDistortionsData(fHDelZ, stat.distZ, stat.bvox);
 	//	
 	for (stat.bvox[kVoxQ]=0;stat.bvox[kVoxQ]<kNQBins;stat.bvox[kVoxQ]++) {
 	  //
 	  ExtractResidualHisto(harrY,fNBProdDY,stat.bvox,fHDelY);
-	  ExtractDistortionsData(fHDelY, stat.distY);
+	  ExtractDistortionsData(fHDelY, stat.distY, stat.bvox);
 	  //
 	  //ExtractResidualHisto(harrZ,fNBProdDZ,stat.bvox,fHDelZ); // integrate over Q bins
 	  //ExtractDistortionsData(fHDelZ, stat.distZ);
@@ -1096,7 +1106,7 @@ void ExtractVoxelData(bstat_t &stat, const TNDArrayT<short>* harrY, const TNDArr
 }
 
 //______________________________________________________________________________
-void ExtractDistortionsData(TH1F* histo, float est[kNEstPar], float minNorm, float fracLTM)
+void ExtractDistortionsData(TH1F* histo, float est[kNEstPar], const UChar_t vox[kVoxDim], float minNorm, float fracLTM)
 {
   const float kMinEntries=30;
   static TF1 fgaus("fgaus","gaus",-10,10);
@@ -1151,6 +1161,7 @@ void ExtractDistortionsData(TH1F* histo, float est[kNEstPar], float minNorm, flo
   //
   int nltmAcc = 0;
   int bminPrev = -1, bmaxPrev = -1;
+  float bwsig = histo->GetBinWidth(1)/TMath::Sqrt(12);
   for (int iltm=0;iltm<kNLTMTests;iltm++) {
     TStatToolkit::LTMHisto(histo, vecLTM, kLTMTests[iltm]);
     int bmin = int(vecLTM[5]), bmax = int(vecLTM[6]);
@@ -1163,9 +1174,14 @@ void ExtractDistortionsData(TH1F* histo, float est[kNEstPar], float minNorm, flo
     while (!histo->GetBinContent(bmax)) bmax--;
     double muEst = ltmMuEst[nltmAcc]  = vecLTM[1];
     double sigEst = ltmSigEst[nltmAcc] = vecLTM[2];
+    if (sigEst<bwsig) sigEst = bwsig;
     //
     // extract non-truncated estimators and sample and reference log-likelihoods
     logLArr[nltmAcc] = GetLogL(histo,bmin,bmax,muEst,sigEst,logL0Arr[nltmAcc]);
+    if (logLArr[nltmAcc]<-1e8) {
+      printf("Failure for LTM_%.3f in voxel Q:%d F:%d X:%d Z:%d\n",
+	     kLTMTests[iltm],vox[kVoxQ],vox[kVoxF],vox[kVoxX],vox[kVoxZ]);
+    }
     sigEstArr[nltmAcc] = sigEst;
     muEstArr[nltmAcc]  = muEst;
     //
@@ -2021,11 +2037,15 @@ Bool_t ExtractVoxelXYZDistortions(const bstat_t voxIQ[kNQBins], bres_t &res, int
 //__________________________________________________________________________________
 Bool_t ValidateTrack(int nCl, float *arrX, const float* arrDY, const float* arrDZ, const int *arrSectID)
 {
-  if (nCl<fMinNCl) return kFALSE;
+  // if (nCl<fMinNCl) return kFALSE;
+ if (nCl<fNVoisinMALong) return kFALSE;
 
   Bool_t rejCl[kNPadRows];
-  int nRej = CheckResiduals(nCl,arrX,arrDY,arrDZ,arrSectID,rejCl, fNVoisinMA, fMaxStdDevMA);
+  float rmsLong = 0.f;
+  int nRej = CheckResiduals(nCl,arrX,arrDY,arrDZ,arrSectID,rejCl, rmsLong, 
+			    fNVoisinMA, fMaxStdDevMA,fNVoisinMALong);
   if (float(nRej)/nCl > fMaxRefFrac) return kFALSE;
+  if (rmsLong>fMaxRMSLong) return kFALSE;
   //
   // flag outliers
   for (int i=nCl;i--;) if (rejCl[i]) arrX[i] = -1;
@@ -2044,12 +2064,14 @@ Bool_t CompareToHelix(int np, const float *x, const float *y, const float *z,
   float xlab[kNPadRows],ylab[kNPadRows],spath[kNPadRows];
   // fill lab coordinates
   float crv = TMath::Abs(q2ptFit*fBz*0.299792458e-3f), cs,sn;
-  int sectPrev=-1,sect0 = sect36[0]%kNSect; // align to 1st point
-  float phiAlp = (sect0+0.5)*20*TMath::DegToRad();
+  int sectPrev=-1,sect0 = sect36[0]%kNSect; // align to the sector of 1st point
+  float phiSect = (sect0+0.5)*20*TMath::DegToRad();
+  double sna = TMath::Sin(phiSect), csa = TMath::Cos(phiSect);
+  //
   spath[0] = 0.f;
   for (int ip=0;ip<np;ip++) {
-    cs = TMath::Cos(phi[ip]-phiAlp);
-    sn = TMath::Sin(phi[ip]-phiAlp);
+    cs = TMath::Cos(phi[ip]-phiSect);
+    sn = TMath::Sin(phi[ip]-phiSect);
     xlab[ip] = x[ip]*cs - y[ip]*sn;
     ylab[ip] = y[ip]*cs + x[ip]*sn;
     if (ip) {
@@ -2064,16 +2086,25 @@ Bool_t CompareToHelix(int np, const float *x, const float *y, const float *z,
       spath[ip] = spath[ip-1]+ds;
     }
   }
-  float xc=0,yc=0,r2=0;
-  FitCircle(np,xlab,ylab,xc,yc,r2,resHelixY);
+  double xcSec=0,ycSec=0,xc=0,yc=0,r=0;
+  FitCircle(np,xlab,ylab,xcSec,ycSec,r,resHelixY);
   // determine qurvature
   float phi0 = TMath::ATan2(ylab[0],xlab[0]);
   if (phi0<0) phi0 += TMath::Pi()*2;
   float phi1 = TMath::ATan2(ylab[np-1],xlab[np-1]);
   if (phi1<0) phi1 += TMath::Pi()*2;
+  float dphi = phi1-phi0;
   int curvSign = 1;
-  if (phi1>phi0 || phi0-phi1>TMath::Pi()) curvSign = -1;
-  q2ptFit = curvSign/(TMath::Sqrt(r2)*fBz*0.299792458e-3f);
+  if (dphi>0) {
+    if (dphi<TMath::Pi()) curvSign = -1; // clockwise, no 2pi-0 crossing
+  }
+  else if (dphi<-TMath::Pi()) curvSign = -1; // clockwise, 2pi-0 crossing
+  //
+  q2ptFit = curvSign/(r*fBz*0.299792458e-3f);
+  //
+  // calculate circle coordinates in the lab frame
+  xc = xcSec*csa - ycSec*sna;
+  yc = ycSec*csa + xcSec*sna;
   //
   float pol1z[2],pol1zE[4] ;
   Bool_t resfZ = FitPoly1(spath, z, 0, np, pol1z, pol1zE);
@@ -2081,8 +2112,7 @@ Bool_t CompareToHelix(int np, const float *x, const float *y, const float *z,
   tgLamFit = pol1z[1]; // new tg. lambda
   // extract deviations wrt helical fit and fill track slopes in sector frame
   float hmnY=1e9,hmxY=-1e9,hmnZ=1e9,hmxZ=-1e9;
-  float sna=0.f,csa=0.f; // sector alpha sin and cos
-  float phiSect = 0.f;
+
   for (int ip=0;ip<np;ip++) {
     float val = z[ip] - (pol1z[0]+spath[ip]*pol1z[1]);
     resHelixZ[ip] = val;
@@ -2094,22 +2124,23 @@ Bool_t CompareToHelix(int np, const float *x, const float *y, const float *z,
     if (val>hmxY) hmxY = val;
     //  
     int sect = sect36[ip]%kNSect;
-    if (sect!=sectPrev) {
-      sectPrev = sect;
+    if (sect!=sect0) {
+      sect0 = sect;
       phiSect = (0.5f + sect)*kSecDPhi;
       sna = TMath::Sin(phiSect);
       csa = TMath::Cos(phiSect);
+      xcSec = xc*csa + yc*sna; // recalculate circle center in the sector frame
     }
     // find intersection of the circle with the padrow
-    // 1) equation of padrow at X in lab: x=X*(csa - t*sna), y=X*(sna+t*csa)
-    // 2) equation of circle in lab: x=xc+r*cos(tau), y=yc+r*sin(tau)
-    // 3) equation of circle in sector frame: 
-    //    x=xc'+r*cos(tau-alpSect), y=yc'+r*sin(tau-alpSect)
-    // The circle and padrow at cos(tau-alpSect) = (X-xc*csa-yc*sna)/r
+    // 1) equation of circle in lab: x=xc+r*cos(tau), y=yc+r*sin(tau)
+    // 2) equation of circle in sector frame: 
+    //    x=xc'+R*cos(tau-alpSect), y=yc'+R*sin(tau-alpSect)
+    //    with xc'=xc*cos(-alp)-yc*sin(-alp); yc'=yc*cos(-alp)+xc*sin(-alp)
+    // The circle and padrow at X cross at cos(tau) = (X-xc*csa+yc*sna)/R
     // Hence the derivative of y vs x in sector frame:
     cs = TMath::Cos(phi[ip]-phiSect);
     double xRow = x[ip]*cs; 
-    double cstalp = (xRow - xc*csa - yc*sna)/TMath::Sqrt(r2);
+    double cstalp = (xRow - xcSec)/r;
     if (TMath::Abs(cstalp)>1.-kEps) { // track cannot reach this padrow
       cstalp = TMath::Sign(1.-kEps,cstalp);
     }
@@ -2126,8 +2157,8 @@ Bool_t CompareToHelix(int np, const float *x, const float *y, const float *z,
 }
 
 //_______________________________________________________________
-int CheckResiduals(int np, const float *x, const float *y, const float *z, const int *sec36, Bool_t* kill, 
-		   int nVois,float cut)
+int CheckResiduals(int np, const float *x, const float *y, const float *z, const int *sec36, 
+		   Bool_t* kill, float &rmsLongMA, int nVois,float cut, int nVoisLong)
 {
 
   int ip0=0,ip1;
@@ -2139,6 +2170,8 @@ int CheckResiduals(int np, const float *x, const float *y, const float *z, const
   float zDiffLL[kNPadRows] = {0.f};
   float absDevY[kNPadRows] = {0.f};
   float absDevZ[kNPadRows] = {0.f};
+
+  rmsLongMA = 0.f;
 
   memset(kill,0,np*sizeof(Bool_t));
   for (int i=0;i<np;i++) {
@@ -2190,7 +2223,8 @@ int CheckResiduals(int np, const float *x, const float *y, const float *z, const
   //
   float rmsKYI = 1./rmsKY;
   float rmsKZI = 1./rmsKZ;
-  int nKill = 0;
+  int nKill=0, nacc = 0;
+  float yacc[kNPadRows],yDiffLong[kNPadRows];
   for (int ip=0;ip<np;ip++) {
 
     yDiffLL[ip] *= rmsKYI;
@@ -2200,6 +2234,19 @@ int CheckResiduals(int np, const float *x, const float *y, const float *z, const
       kill[ip] = kTRUE;
       nKill++;
     }
+    else yacc[nacc++] = y[ip];
+  }
+  // rms to long-range moving average wrt surviving clusters
+  if (nacc>nVoisLong) {
+    DiffToMA(nacc, yacc, nVoisLong, yDiffLong);
+    float av=0,rms=0;
+    for (int i=0;i<nacc;i++) {
+      av += yDiffLong[i];
+      rms  += yDiffLong[i]*yDiffLong[i];
+    }
+    av /= nacc;
+    rmsLongMA = rms/nacc - av*av;
+    rmsLongMA = rmsLongMA>0 ? TMath::Sqrt(rmsLongMA) : 0.f;
   }
   return nKill;
   //
@@ -2207,7 +2254,7 @@ int CheckResiduals(int np, const float *x, const float *y, const float *z, const
 
 //____________________________________________________________________
 void FitCircle(int np, const float* x, const float* y, 
-	       float &xc, float &yc, float &r2, float* dy)
+	       double &xc, double &yc, double &r, float* dy)
 {
   // fit points to circle, if dy!=0, fill residuals
   double x0=0.,y0=0.;
@@ -2233,7 +2280,7 @@ void FitCircle(int np, const float* x, const float* y,
   double det = su2*sv2-suv*suv;
   double uc  = (rhsU*sv2 - rhsV*suv)/det;
   double vc  = (su2*rhsV - suv*rhsU)/det;
-  r2  = uc*uc + vc*vc + (su2+sv2)/np;
+  double r2  = uc*uc + vc*vc + (su2+sv2)/np;
   xc = uc + x0;
   yc = vc + y0;
   //
@@ -2248,10 +2295,11 @@ void FitCircle(int np, const float* x, const float* y,
       dy[i] = TMath::Abs(dysp)<TMath::Abs(dysm) ? dysp : dysm;
     }
   }
+  r = TMath::Sqrt(r2);
 }
 
 //_________________________________________
-void DiffToMA(int np, const float* x, const float *y, const int winLR, float* diffMA)
+void DiffToMA(int np, const float *y, const int winLR, float* diffMA)
 {
   // difference to moving average, excluding central element
   //

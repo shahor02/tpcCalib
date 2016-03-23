@@ -98,7 +98,7 @@ void CheckTrack(float q2pt, int np, const float *x, const float* y, const float 
 		float *xTrc,float *yTrc, float *zTrc);
 
 int CheckResiduals(int np, const float *x, const float *y, const float *z, const int *sec36, Bool_t* kill,
-		   int nVois=3,float cut=16.);
+		   float &rmsLongMA, int nVois=3,float cut=16., int nVoisLong=15);
 
 void FitCircle(int np, const float* x, const float* y, 
 	       float &xc, float &yc, float &r2, float* dy=0);
@@ -116,7 +116,7 @@ Bool_t FitPoly1(const float* x,const float* y, const float* w, int np, float *re
 void MaxLeftRightDev(int np, const float* x, const float *y, const int nVoisin, 
 		     float *diffY, float *diffLR, float *kink);
 
-void DiffToMA(int np, const float* x, const float *y, const int winLR, float* diffMA);
+void DiffToMA(int np, const float *y, const int winLR, float* diffMA);
 
 int DiffToLocLine(int np, const float* x, const float *y, const int nVoisin, float *diffY);
 int DiffToMedLine(int np, const float* x, const float *y, const int nVoisin, float *diffY);
@@ -187,7 +187,8 @@ float kMaxStdDev    = 16.0;
 float kMaxRejFrac   = 0.15;
 int   fMinNCl       = 50;
 int   kNVoisin      = 3;
-
+int   kNVoisinLong  = 15;
+float kMaxRMSLong   = 0.7;
 
 void Process(int ev)
 {
@@ -308,8 +309,11 @@ void Process(int ev)
   if (nCl<3) return;
   float tgSlope[159];
   Bool_t trRejRS = kFALSE;
-  int nRejRS = CheckResiduals(nCl,arrX,arrDY,arrDZ,arrSectID,rejRS, kNVoisin, kMaxStdDev);
+  float rmsLong = 0;
+  int nRejRS = CheckResiduals(nCl,arrX,arrDY,arrDZ,arrSectID,rejRS, rmsLong, kNVoisin, kMaxStdDev, kNVoisinLong);
   //  CheckTrack(q2pt, nCl, arrX,arrY,arrZ, arrDY,arrDZ, arrSectID, arrXtrack,arrYtrack,arrZtrack);
+  if (rmsLong>kMaxRMSLong) trRejRS = kTRUE;
+  float q2ptTPC = q2pt;
   Bool_t resH = CompareToHelix(nCl, arrX, arrDY, arrZ, arrPhi, arrSectID,
 			       q2pt,tgLam,tgSlope,
 			       arrYtrack,arrZtrack,
@@ -483,13 +487,15 @@ void Process(int ev)
   gPad->SetGrid();
   //
 
-  TString txtRS = Form("RS: TagCl: %d of %d (%.3f) DiffToHelix: Y:%.3f Z:%.3f -> %s\n",
-		       nRejRS,nCl,float(nRejRS)/nCl,
-		       maxDevY,maxDevZ,trRejRS ? "REJ":"ACC");
-  lab = AddTxtLabel(txtRS.Data(),0.05,0.94,kRed,0.03);
+  TString txtRS = Form("RS: TagCl: %d of %d (%.3f) DiffToHelix: Y:%.3f Z:%.3f | RMSLong: %.3f\n",
+		       nRejRS,nCl,float(nRejRS)/nCl,maxDevY,maxDevZ,rmsLong);
+  lab = AddTxtLabel(txtRS.Data(),0.05,0.96,kRed,0.03);
   auxObj.Add(lab);
 
+  txtRS = Form("Q/pT: %+.3f ->%+.3f | %s\n",q2ptTPC,q2pt,trRejRS ? "REJ":"ACC");
+  lab = AddTxtLabel(txtRS.Data(),0.1,0.92,kRed,0.03);
 
+  auxObj.Add(lab);
   cnv->cd(3);
   grTrY->Draw("ap");
   gPad->SetGrid();
@@ -550,16 +556,21 @@ Bool_t CompareToHelix(int np, const float *x, const float *y, const float *z,
   }
   float xc=0,yc=0,r2=0;
   FitCircle(np,xlab,ylab,xc,yc,r2,resHelixY);
-  printf("Fit : %f %f %f\n",xc,yc,r2);
-  for (int i=0;i<np;i++) printf("%d %+e %+e %+e\n",i,xlab[i],ylab[i],resHelixY[i]);
+  //printf("Fit : %f %f %f\n",xc,yc,r2);
+  //for (int i=0;i<np;i++) printf("%d %+e %+e %+e\n",i,xlab[i],ylab[i],resHelixY[i]);
 
   // determine qurvature
   float phi0 = TMath::ATan2(ylab[0],xlab[0]);
   if (phi0<0) phi0 += TMath::Pi()*2;
   float phi1 = TMath::ATan2(ylab[np-1],xlab[np-1]);
   if (phi1<0) phi1 += TMath::Pi()*2;
+  float dphi = phi1-phi0;
   int curvSign = 1;
-  if (phi1>phi0 || phi0-phi1>TMath::Pi()) curvSign = -1;
+  if (dphi>0) {
+    if (dphi<TMath::Pi()) curvSign = -1; // clockwise, no 2pi-0 crossing
+  }
+  else if (dphi<-TMath::Pi()) curvSign = -1; // clockwise, 2pi-0 crossing
+  //
   q2ptFit = curvSign/(TMath::Sqrt(r2)*fBz*0.299792458e-3f);
   //
   float pol1z[2],pol1zE[4] ;
@@ -1142,12 +1153,13 @@ void MaxLeftRightDev(int np, const float* x, const float *y, const int nVoisin,
 }
 
 int CheckResiduals(int np, const float *x, const float *y, const float *z, const int *sec36, Bool_t* kill, 
-		   int nVois,float cut)
+		   float &rmsLongMA, int nVois,float cut, int nVoisLong)
 {
 
   int ip0=0,ip1;
   int sec0 = sec36[ip0];
   int npLast = np-1;
+  rmsLongMA = 0;
   //
   const int nMinAcc = 30;
 
@@ -1167,8 +1179,8 @@ int CheckResiduals(int np, const float *x, const float *y, const float *z, const
     //
     DiffToLocLine(npSec, x+ip0, y+ip0, nVois, yDiffLL+ip0);
     DiffToLocLine(npSec, x+ip0, z+ip0, nVois, zDiffLL+ip0);
-    DiffToMA(npSec, x+ip0, y+ip0, nVois, yDiffMA+ip0);
-    DiffToMA(npSec, x+ip0, z+ip0, nVois, zDiffMA+ip0);
+    DiffToMA(npSec, y+ip0, nVois, yDiffMA+ip0);
+    DiffToMA(npSec, z+ip0, nVois, zDiffMA+ip0);
     //
     ip0 = i;
     sec0 = sec36[ip0];
@@ -1200,6 +1212,8 @@ int CheckResiduals(int np, const float *x, const float *y, const float *z, const
   //
   //
   int nKill = 0;
+  float yacc[kNPadRows],yDiffLong[kNPadRows];
+  int nacc = 0;
   for (int ip=0;ip<np;ip++) {
 
     yDiffLL[ip] /= rmsKY;
@@ -1211,7 +1225,20 @@ int CheckResiduals(int np, const float *x, const float *y, const float *z, const
       kill[ip] = kTRUE;
       nKill++;
     }
+    else yacc[nacc++] = y[ip];
   }
+  if (nacc>nVoisLong) {
+    DiffToMA(nacc, yacc, nVoisLong, yDiffLong);
+    float av=0,rms=0;
+    for (int i=0;i<nacc;i++) {
+      av += yDiffLong[i];
+      rms  += yDiffLong[i]*yDiffLong[i];
+    }
+    av /= nacc;
+    rmsLongMA = rms/nacc - av*av;
+    rmsLongMA = rmsLongMA>0 ? TMath::Sqrt(rmsLongMA) : 0.f;
+  }
+  //
   return nKill;
   //
 }
@@ -1241,8 +1268,8 @@ void CheckResiduals(int np, const float *x, const float *y, const float *z, cons
     segmStart[nSegments] = ip0;
     segmNClus[nSegments] = npSec;
     //
-    DiffToMA(npSec, x+ip0, y+ip0, 5, yDiffMA+ip0);
-    DiffToMA(npSec, x+ip0, z+ip0, 5, zDiffMA+ip0);
+    DiffToMA(npSec, y+ip0, 5, yDiffMA+ip0);
+    DiffToMA(npSec, z+ip0, 5, zDiffMA+ip0);
     //
     float* yDiffLLp = yDiffLL+ip0;
     float* zDiffLLp = zDiffLL+ip0;
@@ -1343,7 +1370,7 @@ void CheckResiduals(int np, const float *x, const float *y, const float *z, cons
 */
 
 //_________________________________________
-void DiffToMA(int np, const float* x, const float *y, const int winLR, float* diffMA)
+void DiffToMA(int np, const float *y, const int winLR, float* diffMA)
 {
   // difference to moving average, excluding central element
   //
