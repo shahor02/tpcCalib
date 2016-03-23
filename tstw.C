@@ -109,7 +109,7 @@ const Float_t kMaxRMSClusterCut=0.3;    // maximal RMS (cm) between the cluster 
 const Float_t kMaxDeltaClusterCut=0.5;    // maximal delta(cm) between the cluster and local mean
 
 // My settings
-Float_t  fMinNCl = 50;
+Float_t  fMinNCl = 30;
 Float_t  fMaxDevYHelix = 0.3;
 Float_t  fMaxDevZHelix = 0.3; // !!! VDrift calib. screas up the Z fit, 0.3 w/o vdrift
 Float_t  fNVoisinMA = 3;
@@ -260,7 +260,7 @@ void SetKernelType(int tp = kEpanechnikovKernel, float bwX=2.5f, float bwP=2.5f,
 
 void CreateCorrectionObject();
 
-void  InitForBugFix(const char* ocdb = "local:///cvmfs/alice.cern.ch/calibration/data/2015/OCDB");
+void  InitForBugFix(const char* ocdb = "raw://");//"local:///cvmfs/alice.cern.ch/calibration/data/2015/OCDB");
 THnF* CreateVoxelStatHisto(int sect);
 THn* CreateSectorResidualsHisto(int sect, int nbDelta,float range, const char* pref);
 void ProcessSectorResiduals(int is, bstat_t& stat);
@@ -279,11 +279,12 @@ void FixAlignmentBug(int sect, float q2pt, float bz, float& alp, float& x, float
 
 // track validation
 
-Bool_t ValidateTrack(int nCl, float q2pt, float *arrX, const float *arrY, const float* arrZ,
-		     const float* arrDY, const float* arrDZ, const int *arrSectID);
+Bool_t ValidateTrack(int nCl, float *arrX, const float* arrDY, const float* arrDZ, const int *arrSectID);
+Bool_t CompareToHelix(int nCl, const float *x, const float *y, const float *z, 
+		      const float *phi,const int *sect36,
+		      float &q2ptFit, float &tgLamFit, float* tgSlope,
+		      float *resHelixY, float *resHelixZ, float maxDevY, float maxDevZ);
 
-Bool_t CheckTrack(float q2pt, int np, const float *x, const float* y, const float *z, 
-		  const float* resy, const float *resz, const int* sect36);
 int CheckResiduals(int np, const float *x, const float *y, const float *z, const int *sec36, Bool_t* kill,
 		   int nVois=3,float cut=16.);
 void FitCircle(int np, const float* x, const float* y, 
@@ -299,7 +300,7 @@ void medFit(int np, const float* x, const float* y, float &a, float &b, float de
 
 
 // bin manipulation
-Bool_t FindVoxelBin(int sectID, float q2pt, float x, float y, float z, UChar_t bin[kVoxHDim],float voxVars[kVoxHDim]);
+Bool_t FindVoxelBin(int sectID, float tgSlp, float q2pt, float x, float y, float z, UChar_t bin[kVoxHDim],float voxVars[kVoxHDim]);
 
 void    InitBinning(int nbx, int nby, int nbz);
 Float_t GetX(int i);
@@ -567,10 +568,12 @@ void Init(int run
   fInitDone = kTRUE;
 }
 
-void CollectData() {
+void CollectData() 
+{
   const float kInvalidR = 10.f;
   const float kInvalidRes = -900;
   const float kEps = 1e-6;
+  const float q2ptIniTolerance = 1.5;
   if (!fInitDone) {printf("Init not done\n"); return;}
   //  gEnv->SetValue("TFile.AsyncPrefetching", 1);
   TVectorF *vecDY=0,*vecDZ=0,*vecZ=0,*vecR=0,*vecSec=0,*vecPhi=0, *vecDYITS=0,*vecDZITS=0;
@@ -657,9 +660,13 @@ void CollectData() {
     int nTracks = tree->GetEntries();
     printf("Processing %d tracks of %s\n",nTracks,fileNameString.Data());
 
-    float arrPhi[kNPadRows],arrX[kNPadRows],arrY[kNPadRows],arrZ[kNPadRows],arrDY[kNPadRows],arrDZ[kNPadRows];
+    float arrPhi[kNPadRows],arrDY[kNPadRows],arrDZ[kNPadRows],
+      arrX[kNPadRows],arrYCl[kNPadRows],arrZCl[kNPadRows],
+      arrYTr[kNPadRows],arrZTr[kNPadRows],
+      residHelixY[kNPadRows],residHelixZ[kNPadRows],tgSlope[kNPadRows];
+    //
     int arrSectID[kNPadRows], nCl=0;
-    
+    //
     Bool_t lastReadMatched = kFALSE; // reset the cache when swithching between the timeStamp and Event read modes
     for (int itr=0;itr<nTracks;itr++) {
       nBytesReadChunk += brTime->GetEntry(itr);
@@ -684,7 +691,7 @@ void CollectData() {
       if (fNPrimTracksCut>0 && nPrimTracks>fNPrimTracksCut) continue;
       //
       float q2pt = param->GetParameter()[4], tgLam = param->GetParameter()[3];
-      if (TMath::Abs(q2pt)>fMaxQ2Pt) continue;
+      if (TMath::Abs(q2pt)>fMaxQ2Pt*q2ptIniTolerance) continue;
       //
       const Float_t *vSec= vecSec->GetMatrixArray();
       const Float_t *vPhi= vecPhi->GetMatrixArray();
@@ -695,100 +702,105 @@ void CollectData() {
       const Float_t *vDYITS = vecDYITS->GetMatrixArray();
       const Float_t *vDZITS = vecDZITS->GetMatrixArray();
       //
-      ntrSelChunkWO++;
-      /*
-      if (fFilterOutliers) { 
-	// at the moment use Marian's implementation >>>>>
-	Float_t rmsTrack=3, rmsCluster=1;
-	Int_t nSkippedCluster=AliTPCcalibAlignInterpolation::CalculateDistance(*vecDY,*vecDYITS, *vecSec, *vecLocalDelta, npValid, rmsTrack, rmsCluster,1.5);
-	if (nSkippedCluster>kMaxSkippedCluster) continue;
-	if (rmsTrack>kMaxRMSTrackCut) continue;
-	if (rmsCluster>kMaxRMSClusterCut) continue;	
-      }
-      */
-      //
-      // at the moment use Marian's implementation <<<<<
-      //
       fCorrTime = (fVDriftGraph!=NULL) ? fVDriftGraph->Eval(timeStamp):0; // for VDrift correction
       //
       nCl = 0;
+      // 1st iteration: collect data in cluster frame
       for (int ip=0;ip<npValid;ip++) { // 1st fill selected track data to buffer for eventual outlier rejection
 	if (vR[ip]<kInvalidR || vDY[ip]<kInvalidRes || vDYITS[ip]<kInvalidRes) continue;
 	//
-	arrX[nCl] = vR[ip];
-	arrZ[nCl] = vZ[ip];
-	arrDY[nCl] = vDY[ip];
-	arrDZ[nCl] = vDZ[ip];
+	arrX[nCl]   = vR[ip];  // X (R) is the same for cluster and track
+	arrZTr[nCl] = vZ[ip];  // Z of ITS track was stored!!
+	arrDY[nCl]  = vDY[ip]; // this is also the track coordinate in cluster frame
+	arrDZ[nCl]  = vDZ[ip];
 	arrPhi[nCl] = vPhi[ip];
 	int rocID = TMath::Nint(vSec[ip]);
 	//
-	// !!! arrZ corresponds to ITS track Z, we need that of TRD-ITS
-	arrZ[nCl] += arrDZ[nCl] - vDZITS[ip]; // recover ITS-TRD track position from ITS and deltas
-
+	// !!! arrZTr corresponds to ITS track Z, we need that of TRD-ITS
+	arrZTr[nCl] += arrDZ[nCl] - vDZITS[ip]; // recover ITS-TRD track position from ITS and deltas
+	
 	if (fFixAlignmentBug && !param->TestBit(kAlignmentBugFixedBit)) {
-	  FixAlignmentBug(rocID, q2pt, fBz, arrPhi[nCl], arrX[nCl], arrZ[nCl], arrDY[nCl],arrDZ[nCl]);
+	  FixAlignmentBug(rocID, q2pt, fBz, arrPhi[nCl], arrX[nCl], arrZTr[nCl], arrDY[nCl],arrDZ[nCl]);
 	}
 	if (arrPhi[nCl]<0) arrPhi[nCl] += 2.*TMath::Pi();
 	//
 	// calculate drift velocity calibration if available
-	float dzDrift = GetDriftCorrection(arrZ[nCl],arrX[nCl],arrPhi[nCl],rocID);
+	float dzDrift = GetDriftCorrection(arrZTr[nCl],arrX[nCl],arrPhi[nCl],rocID);
 	// apply drift velocity calibration if available
 	arrDZ[nCl] += dzDrift;
 	//
 	arrSectID[nCl] = rocID%kNSect2; // 0-36 for sectors from A0 to C17
 	//
-	// *****************************************************************
-	//
-	// All these manipulations are needed because the ResidualTree is stored
-	// in cluster frame, while we need the sector frame
-	//
-	float sna = TMath::Sin(arrPhi[nCl]-(0.5f +rocID%kNSect)*kSecDPhi);
+	nCl++;
+      }
+      // fit track coordinates by helix to get interpolated track q/pt: more precise than the distorted TPC q/pt
+      if (nCl<fMinNCl) continue;
+      //
+      ntrSelChunkWO++;
+      //
+      Bool_t resH = CompareToHelix(nCl, arrX, arrDY, arrZTr, arrPhi, arrSectID,
+				   q2pt,tgLam,tgSlope,
+				   residHelixY,residHelixZ,
+				   fMaxDevYHelix,fMaxDevZHelix);
+      //
+      if (fFilterOutliers && !resH) continue; // too strong deviation to helix, discard track
+      if (TMath::Abs(q2pt)>fMaxQ2Pt) continue; // now we have more precise estimate of q/pt
+      //
+      // 2nd iteration: convert everything to sector frame
+      // *****************************************************************
+      //
+      // All these manipulations are needed because the ResidualTree is stored
+      // in cluster frame, while we need the sector frame
+      //
+      // *****************************************************************
+      int nc0 = nCl; 
+      nCl = 0;
+      for (int ip=0;ip<nc0;ip++) {
+	
+	float sna = TMath::Sin(arrPhi[ip]-(0.5f +arrSectID[ip]%kNSect)*kSecDPhi);
 	float csa = TMath::Sqrt((1.f-sna)*(1.f+sna));
 	//
 	// by using propagation in cluster frame in AliTPCcalibAlignInterpolation::Process,
 	// the X of the track is evaluated not at the pad-row x=r*csa but at x=r*sca-dy*sna
-	double xrow = arrX[nCl]*csa;
-	double dx   = arrDY[nCl]*sna;
-	double xtr = xrow - dx;
-	// the cluster Y in the sector frame is 
-	double ycl = arrX[nCl]*sna;
-	// and the track Y in the sector frame at x=xtr is 
-	double ytr = ycl + arrDY[nCl]*csa;
+	double xrow = arrX[ip]*csa;
+	double dx   = arrDY[ip]*sna;
+	double xtr  = xrow - dx;
+	double ycl  = arrX[ip]*sna;      // cluster Y in the sector frame
+	double ytr  = ycl + arrDY[ip]*csa; // track Y in the sector frame at x=xtr is 
 	//
-	// Z of the track at x=xtr is
-	double ztr = arrZ[nCl];
-	// and the Z of the cluster is Ztr-deltaZ
-	double zcl = ztr - arrDZ[nCl];
+	double ztr  = arrZTr[ip];          // Z of the track at x=xtr
+	double zcl  = ztr - arrDZ[ip];     // and the Z of the cluster is Ztr-deltaZ
 	//
 	// Now we need to take the track to real pad-row X
-	// 1) get track angle in the sector frame at xtr
-	double tgXtr = tgpXY(xtr,ytr,q2pt,fBz);
-	// 2) use linear extrapolation:
-	ytr += dx*tgXtr;
-	double csXtrInv = TMath::Sqrt(1.+tgXtr*tgXtr); // (inverse cosine of track angle)
+	// use linear extrapolation:
+	float tgs = tgSlope[ip];
+	ytr += dx*tgs;
+	double csXtrInv = TMath::Sqrt(1.+tgs*tgs); // (inverse cosine of track angle)
 	ztr += dx*tgLam*csXtrInv;
 	//
 	// assign to arrays and recalculate residuals
-	arrX[nCl] = xrow;
-	arrY[nCl] = ycl;
-	arrZ[nCl] = zcl;
-	arrDY[nCl] = ytr - ycl;
-	arrDZ[nCl] = ztr - zcl;
+	arrX[nCl]   = xrow;
+	arrYTr[nCl] = ytr;
+	arrZTr[nCl] = ztr;
+	//
+	arrYCl[nCl] = ycl;
+	arrZCl[nCl] = zcl;
+	arrDY[nCl]  = ytr - ycl;
+	arrDZ[nCl]  = ztr - zcl;
+	//
+	// we don't want under/overflows
+	if (TMath::Abs(arrDY[nCl])>fMaxDY-kEps) continue;
+	if (TMath::Abs(arrDZ[nCl])>fMaxDZ-kEps) continue;
+	//
+	if (arrX[nCl]<kMinX || arrX[nCl]>kMaxX) continue;
+	if (TMath::Abs(arrZCl[nCl])>kZLim) continue;;
 	//
 	// End of manipulations to go to the sector frame
 	//
-	// *****************************************************************
-	//
-	if (TMath::Abs(arrDY[nCl])>fMaxDY-kEps) continue; // avoid overflows
-	//
-	if (TMath::Abs(arrDZ[nCl])>fMaxDZ-kEps) continue; // avoid overlaps
-	//
-	if (arrX[nCl]<kMinX || arrX[nCl]>kMaxX) continue;
-	if (TMath::Abs(arrZ[nCl])>kZLim) continue;;
 	nCl++;
       }
 
-      if (fFilterOutliers && !ValidateTrack(nCl, q2pt, arrX,arrY,arrZ,arrDY,arrDZ, arrSectID)) continue;
+      if (fFilterOutliers && !ValidateTrack(nCl, arrX, arrDY,arrDZ, arrSectID)) continue;
 
       ntrSelChunk++;
 
@@ -801,7 +813,8 @@ void CollectData() {
 	// 
 	// calculate voxel variables and bins
 	// 
-	if (!FindVoxelBin(sectID, q2pt, arrX[icl], arrY[icl], arrZ[icl], dts.bvox, voxVars)) continue;
+	if (!FindVoxelBin(sectID, tgSlope[icl], q2pt, arrX[icl], arrYCl[icl], arrZCl[icl], dts.bvox, voxVars)) continue;
+
 	dts.dy   = (arrDY[icl]+fMaxDY)*fDeltaYbinI;
 	dts.dz   = (arrDZ[icl]+fMaxDZ)*fDeltaZbinI;
 	//
@@ -1629,7 +1642,7 @@ float tgpXY(float x, float y, float q2p, float bz)
 }
 
 //_____________________________________________________
-Bool_t FindVoxelBin(int sectID, float q2pt, float x, float y, float z, UChar_t bin[kVoxHDim],float voxVars[kVoxHDim])
+Bool_t FindVoxelBin(int sectID, float tgsl, float q2pt, float x, float y, float z, UChar_t bin[kVoxHDim],float voxVars[kVoxHDim])
 {
   // define voxel variables and bin
   //  
@@ -1654,7 +1667,8 @@ Bool_t FindVoxelBin(int sectID, float q2pt, float x, float y, float z, UChar_t b
   bin[kVoxF] = binF;
   //
   // track inclination at pad row
-  voxVars[kVoxQ] = tgpXY(x,y,q2pt,fBz);
+  // the one calculated from q/pt is less precise
+  voxVars[kVoxQ] = tgsl; // tgpXY(x,y,q2pt,fBz);
   int binQ = GetQBin(q2pt);  //GetQBin(q2pt,binX,binY)
   if (binQ<0) return kFALSE;
   bin[kVoxQ] = binQ;
@@ -2005,89 +2019,110 @@ Bool_t ExtractVoxelXYZDistortions(const bstat_t voxIQ[kNQBins], bres_t &res, int
 //
 
 //__________________________________________________________________________________
-Bool_t ValidateTrack(int nCl, float q2pt, float *arrX, const float *arrY, const float* arrZ,
-		     const float* arrDY, const float* arrDZ, const int *arrSectID)
+Bool_t ValidateTrack(int nCl, float *arrX, const float* arrDY, const float* arrDZ, const int *arrSectID)
 {
   if (nCl<fMinNCl) return kFALSE;
-
-  if (!CheckTrack(q2pt, nCl, arrX,arrY,arrZ, arrDY,arrDZ, arrSectID)) return kFALSE;
 
   Bool_t rejCl[kNPadRows];
   int nRej = CheckResiduals(nCl,arrX,arrDY,arrDZ,arrSectID,rejCl, fNVoisinMA, fMaxStdDevMA);
   if (float(nRej)/nCl > fMaxRefFrac) return kFALSE;
   //
   // flag outliers
-  for (int i=nCl;i--;) if (rejCl[i]) arrX[i] = 1;
+  for (int i=nCl;i--;) if (rejCl[i]) arrX[i] = -1;
 
   return kTRUE;
 }
 
-//_______________________________________________________________
-Bool_t CheckTrack(float q2pt, int np, const float *x, const float* y, const float *z, 
-		  const float* resy, const float *resz, const int* sect36)
+//__________________________________________________________________________________
+Bool_t CompareToHelix(int np, const float *x, const float *y, const float *z, 
+		      const float *phi,const int *sect36,
+		      float &q2ptFit, float &tgLamFit, float* tgSlope,
+		      float *resHelixY, float *resHelixZ, float maxDevY, float maxDevZ)
 {
-  float ssum2=0;
-  int sectCPrev=-1,sect0 = sect36[0]%kNSect; // align to 1st point
-  double sn=0,cs=0;
-  float xTrc[kNPadRows],yTrc[kNPadRows],zTrc[kNPadRows];
-  float sTrc[kNPadRows];
-  sTrc[0] = 0.f;
-  float crv = TMath::Abs(q2pt*fBz*(-0.299792458e-3f));
+  // compare track to helix, refit q/pt and tgLambda and build array of tg(slope) at pad-rows
+  const double kEps = 1e-12;
+  float xlab[kNPadRows],ylab[kNPadRows],spath[kNPadRows];
+  // fill lab coordinates
+  float crv = TMath::Abs(q2ptFit*fBz*0.299792458e-3f), cs,sn;
+  int sectPrev=-1,sect0 = sect36[0]%kNSect; // align to 1st point
+  float phiAlp = (sect0+0.5)*20*TMath::DegToRad();
+  spath[0] = 0.f;
   for (int ip=0;ip<np;ip++) {
-    double xp = x[ip];
-    double yp = y[ip] + resy[ip];
-    double zp = z[ip] + resz[ip]; 
-    int sect = sect36[ip]%kNSect;
-    if (sect!=sect0) { // rotate to reference sector
-      if (sect!=sectCPrev) {
-	double dalp = (sect - sect0)*20*TMath::DegToRad();
-	sn = TMath::Sin(dalp);
-	cs = TMath::Cos(dalp);
-	sectCPrev = sect; // to not recalculate sin,cos every time
-      }
-      float xtmp = xp;
-      xp = xtmp*cs-yp*sn;
-      yp = yp*cs+xtmp*sn;
-    }
-    xTrc[ip] = xp;
-    yTrc[ip] = yp;
-    zTrc[ip] = zp;
+    cs = TMath::Cos(phi[ip]-phiAlp);
+    sn = TMath::Sin(phi[ip]-phiAlp);
+    xlab[ip] = x[ip]*cs - y[ip]*sn;
+    ylab[ip] = y[ip]*cs + x[ip]*sn;
     if (ip) {
-      float dx = xp-xTrc[ip-1];
-      float dy = yp-yTrc[ip-1];
+      float dx = xlab[ip]-xlab[ip-1];
+      float dy = ylab[ip]-ylab[ip-1];
       float ds2 = dx*dx+dy*dy;
       float ds  = TMath::Sqrt(ds2); // circular path
-      if (ds*crv>0.01) { 
+      if (ds*crv>0.05) { 
 	// account for the arc-chord difference as 1st 2 terms of asin expansion	
 	ds *= (1.f+ds2*crv*crv/24.f);
       }
-      sTrc[ip] = sTrc[ip-1]+ds;
+      spath[ip] = spath[ip-1]+ds;
     }
   }
-  //
   float xc=0,yc=0,r2=0;
-  FitCircle(np,xTrc,yTrc,xc,yc,r2,yTrc);
-  float pol1z[2],pol1zE[4] ;
-  Bool_t resfZ = FitPoly1(sTrc, zTrc, 0, np, pol1z, pol1zE);
+  FitCircle(np,xlab,ylab,xc,yc,r2,resHelixY);
+  // determine qurvature
+  float phi0 = TMath::ATan2(ylab[0],xlab[0]);
+  if (phi0<0) phi0 += TMath::Pi()*2;
+  float phi1 = TMath::ATan2(ylab[np-1],xlab[np-1]);
+  if (phi1<0) phi1 += TMath::Pi()*2;
+  int curvSign = 1;
+  if (phi1>phi0 || phi0-phi1>TMath::Pi()) curvSign = -1;
+  q2ptFit = curvSign/(TMath::Sqrt(r2)*fBz*0.299792458e-3f);
   //
-  for (int ip=0;ip<np;ip++) zTrc[ip] -= pol1z[0]+sTrc[ip]*pol1z[1];
-  // 
+  float pol1z[2],pol1zE[4] ;
+  Bool_t resfZ = FitPoly1(spath, z, 0, np, pol1z, pol1zE);
+  //
+  tgLamFit = pol1z[1]; // new tg. lambda
+  // extract deviations wrt helical fit and fill track slopes in sector frame
   float hmnY=1e9,hmxY=-1e9,hmnZ=1e9,hmxZ=-1e9;
-  for (int i=np;i--;) {
-    float val = yTrc[i];
-    if (val<hmnY) hmnY = val;
-    if (val>hmxY) hmxY = val;
-    val = zTrc[i];
+  float sna=0.f,csa=0.f; // sector alpha sin and cos
+  float phiSect = 0.f;
+  for (int ip=0;ip<np;ip++) {
+    float val = z[ip] - (pol1z[0]+spath[ip]*pol1z[1]);
+    resHelixZ[ip] = val;
     if (val<hmnZ) hmnZ = val;
     if (val>hmxZ) hmxZ = val;
+    //    
+    val = resHelixY[ip];
+    if (val<hmnY) hmnY = val;
+    if (val>hmxY) hmxY = val;
+    //  
+    int sect = sect36[ip]%kNSect;
+    if (sect!=sectPrev) {
+      sectPrev = sect;
+      phiSect = (0.5f + sect)*kSecDPhi;
+      sna = TMath::Sin(phiSect);
+      csa = TMath::Cos(phiSect);
+    }
+    // find intersection of the circle with the padrow
+    // 1) equation of padrow at X in lab: x=X*(csa - t*sna), y=X*(sna+t*csa)
+    // 2) equation of circle in lab: x=xc+r*cos(tau), y=yc+r*sin(tau)
+    // 3) equation of circle in sector frame: 
+    //    x=xc'+r*cos(tau-alpSect), y=yc'+r*sin(tau-alpSect)
+    // The circle and padrow at cos(tau-alpSect) = (X-xc*csa-yc*sna)/r
+    // Hence the derivative of y vs x in sector frame:
+    cs = TMath::Cos(phi[ip]-phiSect);
+    double xRow = x[ip]*cs; 
+    double cstalp = (xRow - xc*csa - yc*sna)/TMath::Sqrt(r2);
+    if (TMath::Abs(cstalp)>1.-kEps) { // track cannot reach this padrow
+      cstalp = TMath::Sign(1.-kEps,cstalp);
+    }
+    // and the slope in sector frame is +-1/tg(acos(cstalp)) = +-cstalp/sqrt(1-cstalp^2)
+    // The sign is defined by the fact that in B+ the slope of q- should increase with X.
+    // Since the derivative of cstalp/sqrt(1-cstalp^2) on X is positive, just look on qB
+    tgSlope[ip] = cstalp/TMath::Sqrt((1.-cstalp)*(1.+cstalp));
+    if (q2ptFit*fBz>0) tgSlope[ip] = -tgSlope[ip];
   }
-  float maxDevY = TMath::Abs(hmxY-hmnY);
-  float maxDevZ = TMath::Abs(hmxZ-hmnZ);
   //
-  if (maxDevY > fMaxDevYHelix) return kFALSE; // max deviation to helix fit
-  if (maxDevZ > fMaxDevZHelix) return kFALSE;
-  //
-  return kTRUE;
+  //  if (TMath::Abs(hmxY-hmnY)>maxDevY || TMath::Abs(hmxZ-hmnZ)>maxDevZ)
+  //    printf("MinMax%d: %e %e %e %e\n",evID,hmnY,hmxY,hmnZ,hmxZ);
+  return TMath::Abs(hmxY-hmnY)<maxDevY && TMath::Abs(hmxZ-hmnZ)<maxDevZ;
 }
 
 //_______________________________________________________________
