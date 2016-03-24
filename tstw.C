@@ -207,7 +207,7 @@ Float_t *fBinDQI;        // inverse of tg(inclination) bin size at given X,Y bin
 Int_t fNTrSelTot = 0;   // selected tracks
 Int_t fNTrSelTotWO = 0; // would be selected w/o outliers rejection
 Int_t fNReadCallTot = 0;
-Int_t fNBytesReadTot = 0;
+ULong64_t fNBytesReadTot = 0;
 Double_t fLastSmoothingRes[kResDim*4];
 
 TVectorF *fQ2Pt;
@@ -261,7 +261,7 @@ void SetKernelType(int tp = kEpanechnikovKernel, float bwX=2.5f, float bwP=2.5f,
 
 void CreateCorrectionObject();
 
-void  InitForBugFix(const char* ocdb = "raw://");//"local:///cvmfs/alice.cern.ch/calibration/data/2015/OCDB");
+void  InitForBugFix(const char* ocdb = "local:///cvmfs/alice.cern.ch/calibration/data/2015/OCDB");
 THnF* CreateVoxelStatHisto(int sect);
 THn* CreateSectorResidualsHisto(int sect, int nbDelta,float range, const char* pref);
 void ProcessSectorResiduals(int is, bstat_t& stat);
@@ -1140,6 +1140,7 @@ void ExtractDistortionsData(TH1F* histo, float est[kNEstPar], const UChar_t vox[
   est[kEstMax]  = maxVal;
   if (nrm<minNorm) return;
   //
+  float bwsig = histo->GetBinWidth(1)/TMath::Sqrt(12);
   const int kNLTMTests = 11;
   const float kLTMTests[kNLTMTests]={1.00,0.95,0.90,0.85,0.80,0.75,0.70,0.65,0.60,0.55,0.50};
   double ltmMuEst[kNLTMTests], ltmSigEst[kNLTMTests];
@@ -1151,7 +1152,7 @@ void ExtractDistortionsData(TH1F* histo, float est[kNEstPar], const UChar_t vox[
   // store reference LTM
   TStatToolkit::LTMHisto(histo, vecLTM, fracLTM); 
   est[kEstMeanL]  = vecLTM[1];
-  est[kEstSigL]   = vecLTM[2];
+  est[kEstSigL]   = TMath::Max(vecLTM[2],bwsig);
   est[kEstMeanEL] = vecLTM[3];
   est[kEstSigEL]  = vecLTM[4];
   //
@@ -1161,19 +1162,18 @@ void ExtractDistortionsData(TH1F* histo, float est[kNEstPar], const UChar_t vox[
   //
   int nltmAcc = 0;
   int bminPrev = -1, bmaxPrev = -1;
-  float bwsig = histo->GetBinWidth(1)/TMath::Sqrt(12);
   for (int iltm=0;iltm<kNLTMTests;iltm++) {
     TStatToolkit::LTMHisto(histo, vecLTM, kLTMTests[iltm]);
     int bmin = int(vecLTM[5]), bmax = int(vecLTM[6]);
     if (bmin==bminPrev && bmax==bmaxPrev) continue; // same range
     bminPrev = bminArr[nltmAcc] = bmin;
     bmaxPrev = bmaxArr[nltmAcc] = bmax;
-    if (bmax-bmin<1) continue; // don't use too narow window
+    if (bmax-bmin<2) continue; // don't use too narow window
     // skip empty bins from edges
     while (!histo->GetBinContent(bmin)) bmin++;
     while (!histo->GetBinContent(bmax)) bmax--;
     double muEst = ltmMuEst[nltmAcc]  = vecLTM[1];
-    double sigEst = ltmSigEst[nltmAcc] = vecLTM[2];
+    double sigEst = ltmSigEst[nltmAcc] = TMath::Max(vecLTM[2],bwsig);
     if (sigEst<bwsig) sigEst = bwsig;
     //
     // extract non-truncated estimators and sample and reference log-likelihoods
@@ -1260,7 +1260,9 @@ Double_t GetLogL(TH1F* histo, int bin0, int bin1, double &mu, double &sig, doubl
   //
   if (sum<1e-6) {logL0 = -1e6; return -1e9;}
   mu = sum1/sum;
-  sig = TMath::Sqrt(sum2/sum - mu*mu);
+  sig = sum2/sum - mu*mu;
+  sig = TMath::Max(sig>0 ? TMath::Sqrt(sig) : 0.f, dxh/TMath::Sqrt(3)); // don't allow too small sigma
+  
   //printf("Sample mu : %e sig: %e in %e %e\n",mu,sig,xb0,xb1);
 
   // estimated sig, mu are from the truncated sample, try to recover the truth
