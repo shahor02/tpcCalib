@@ -919,6 +919,7 @@ void AliTPCDcalibRes::ExtractDistortionsData(TH1F* histo, float est[kNEstPar], c
   //
   // store reference LTM
   TStatToolkit::LTMHisto(histo, vecLTM, fracLTM); 
+  if (!vecLTM[3]) return;
   est[kEstMeanL]  = vecLTM[1];
   est[kEstSigL]   = TMath::Max(vecLTM[2],bwsig);
   est[kEstMeanEL] = vecLTM[3];
@@ -2113,7 +2114,7 @@ Bool_t AliTPCDcalibRes::ExtractVoxelXYZDistortions(const bstat_t voxIQ[kNQBins],
     float ent = vox.stat[kVoxV];
     if (ent<minStat) continue;
     //
-    okG = okL = vox.distY[kEstSigL]>kZeroSigma;
+    okG = okL = vox.distY[kEstSigL]>kZeroSigma && vox.distY[kEstMeanEL]>0;
     //
     if (okG && 
 	vox.distY[kEstNormG]<kMinNormG2M*vox.distY[kEstMax] || // gaussian norm should not be negligible
