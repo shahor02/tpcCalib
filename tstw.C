@@ -584,7 +584,6 @@ void CollectData()
   Char_t trdOK=0;
   AliExternalTrackParam* param = 0;
   //
-  TVectorF *vecLocalDelta = new TVectorF(kNPadRows);
   TStopwatch swTot;
   swTot.Start();
   
@@ -882,7 +881,6 @@ void CollectData()
 
   WriteStatHistos();
   //
-  delete vecLocalDelta;
 }
 
 //________________________________________________

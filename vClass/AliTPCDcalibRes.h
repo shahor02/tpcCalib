@@ -103,7 +103,7 @@ public:
   void ProcessSectorResiduals(int is, bstat_t &voxStat);
   void ExtractVoxelData(bstat_t &stat,const TNDArrayT<short>* harrY,
 			const TNDArrayT<short>* harrZ,const TNDArrayT<float>* harrStat);
-  void ExtractDistortionsData(TH1F* histo, float est[kNEstPar], float minNorm=5.f, float fracLTM=0.7f);
+  void ExtractDistortionsData(TH1F* histo, float est[kNEstPar], const UChar_t vox[kVoxDim], float minNorm=5.f, float fracLTM=0.7f);
 
   void InitForBugFix(const char* ocdb="raw://");
   THnF* CreateVoxelStatHisto(int sect);
@@ -130,19 +130,21 @@ public:
 				    int minStat=20, float maxGChi2=5, int minYBinsOK=3);
   void  FixAlignmentBug(int sect, float q2pt, float bz, float& alp, float& x, float &z, float &deltaY, float &deltaZ);
 
-  Bool_t ValidateTrack(int nCl, float q2pt, float *arrX, const float *arrY, const float* arrZ,
-		       const float* arrDY, const float* arrDZ, const int *arrSectID);
+  Bool_t ValidateTrack(int nCl, float *arrX, const float* arrDY, const float* arrDZ, const int *arrSectID);
+  Bool_t CompareToHelix(int nCl, const float *x, const float *y, const float *z, 
+			const float *phi,const int *sect36,
+			float &q2ptFit, float &tgLamFit, float* tgSlope,
+			float *resHelixY, float *resHelixZ, float maxDevY, float maxDevZ);
 
-  Bool_t CheckTrack(float q2pt, int np, const float *x, const float* y, const float *z, 
-		    const float* resy, const float *resz, const int* sect36);
-  int    CheckResiduals(int np, const float *x, const float *y, const float *z, const int *sec36, Bool_t* kill,
-			int nVois=3,float cut=16.);
+  int    CheckResiduals(int np, const float *x, const float *y, const float *z, const int *sec36, 
+			Bool_t* kill,float &rmsLongMA,int nVois=3,float cut=16.,int nVoisLong=15);
+
 
 //------------------------------------ misc. stat. methods
 
   void    FitCircle(int np, const float* x, const float* y, 
-		    float &xc, float &yc, float &r2, float* dy=0);
-  void    DiffToMA(int np, const float* x, const float *y, const int winLR, float* diffMA);
+		    double &xc, double &yc, double &r, float* dy=0);
+  void    DiffToMA(int np, const float *y, const int winLR, float* diffMA);
   int     DiffToLocLine(int np, const float* x, const float *y, const int nVoisin, float *diffY);
   int     DiffToMedLine(int np, const float* x, const float *y, const int nVoisin, float *diffY);
   float   RoFunc(int np, const float* x, const float* y, float b, float &aa);
@@ -169,7 +171,7 @@ public:
   Int_t GetXBin(float x);
   Int_t GetRowID(float x);
   
-  Bool_t FindVoxelBin(int sectID,float q2pt,float x,float y,float z,UChar_t bin[kVoxHDim],float voxVars[kVoxHDim]);
+  Bool_t FindVoxelBin(int sectID, float tgSlp, float q2pt, float x, float y, float z, UChar_t bin[kVoxHDim],float voxVars[kVoxHDim]);
   
   Int_t   GetXBinExact(float x);
   Float_t GetY2X(int ix, int iy);
@@ -231,7 +233,9 @@ protected:
   Float_t  fMaxDevYHelix;            // max-min Y deviation of interpolating track from helix
   Float_t  fMaxDevZHelix;            // max-min Z deviation of interpolating track from helix
   Float_t  fNVoisinMA;               // N neighbours for moving average
+  Float_t  fNVoisinMALong;           // max RMS of cleaned residuals wrt its fNVoisinMALong moving average
   Float_t  fMaxStdDevMA;             // max cluster N std.dev (Y^2+Z^2) wrt moving av. to accept
+  Float_t  fMaxRMSLong;              // max RMS of cleaned residuals wrt its fNVoisinMALong moving average
   Float_t  fMaxRejFrac;              // max outlier clusters tagged to accept the track
   Bool_t   fFilterOutliers;          // reject outliers
 
@@ -284,7 +288,7 @@ protected:
   Int_t    fNTrSelTot;      // selected tracks
   Int_t    fNTrSelTotWO;    // would be selected w/o outliers rejection
   Int_t    fNReadCallTot;   // read calls from input trees
-  Int_t    fNBytesReadTot;  // total bytes read
+  Long64_t fNBytesReadTot;  // total bytes read
 
 
   // ------------------------------VDrift correction
@@ -298,7 +302,7 @@ protected:
   TTree* fTmpTree[kNSect2];              //! IO tree per sector
   TFile* fTmpFile[kNSect2];              //! file for fTmpTree
   THnF*  fStatHist[kNSect2];             //! histos for statistics bins
-  TNDArrayT<float> *fArrNDstat[kNSect2]; //! alias arrays for fast access to fStatHist
+  TNDArrayT<float> *fArrNDStat[kNSect2]; //! alias arrays for fast access to fStatHist
 
   TH1F* fHDelY;                          //! work histo for delta Y fits
   TH1F* fHDelZ;                          //! work histo for delta Z fits
