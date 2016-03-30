@@ -17,13 +17,16 @@ const float AliTPCDcalibRes::kMinX = 85.0f;
 const float AliTPCDcalibRes::kMaxX = 246.0f;
 const float AliTPCDcalibRes::kMaxZ2X = 1.0f;
 const float AliTPCDcalibRes::kZLim = 250.0f;
-const char* AliTPCDcalibRes::kTmpFileName  = "tmpDeltaSect";
+const char* AliTPCDcalibRes::kLocalResFileName  = "tmpDeltaSect";
+const char* AliTPCDcalibRes::kClosureTestFileName  = "closureTestSect";
 const char* AliTPCDcalibRes::kStatOut      = "voxelStat";
 const char* AliTPCDcalibRes::kResOut       = "voxelRes";
 const char* AliTPCDcalibRes::kDriftFileName= "fitDrift";
 const float AliTPCDcalibRes::kDeadZone = 1.5;
+const float AliTPCDcalibRes::kZeroK = 1e-6;
+const float AliTPCDcalibRes::kInvalidR = 10.f;
+const float AliTPCDcalibRes::kInvalidRes = -900;
 const ULong64_t AliTPCDcalibRes::kMByte = 1024LL*1024LL;
-const Float_t AliTPCDcalibRes::kZeroK = 1e-6;
 
 
 const Float_t AliTPCDcalibRes::kTPCRowX[AliTPCDcalibRes::kNPadRows] = { // pad-row center X
@@ -245,10 +248,8 @@ void AliTPCDcalibRes::Init(int run
 }
 
 //_____________________________________________________
-void AliTPCDcalibRes::CollectData() 
+void AliTPCDcalibRes::CollectData(int mode) 
 {
-  const float kInvalidR = 10.f;
-  const float kInvalidRes = -900;
   const float kEps = 1e-6;
   const float q2ptIniTolerance = 1.5;
   if (!fInitDone) {printf("Init not done\n"); return;}
@@ -262,19 +263,12 @@ void AliTPCDcalibRes::CollectData()
   //
   TStopwatch swTot;
   swTot.Start();
-  
-  // temporary trees for local delta's storage
-  dts_t dts, *dtsP = &dts; 
+  fNTrSelTot = 0;
+  fNTrSelTotWO = 0;
+  fNReadCallTot = 0;
+  fNBytesReadTot = 0;
   //
-  for (int is=0;is<kNSect2;is++) {
-    fTmpFile[is] = TFile::Open(Form("%s%d.root",kTmpFileName,is),"recreate");
-    fTmpTree[is] = new TTree(Form("ts%d",is),"");
-    fTmpTree[is]->Branch("dts",&dtsP);
-    //fTmpTree[is]->SetAutoFlush(150000);
-    //
-    fStatHist[is] = CreateVoxelStatHisto(is);
-    fArrNDStat[is] = (TNDArrayT<float>*)&fStatHist[is]->GetArray();
-  }
+  CreateLocalResidualsTrees(mode);
   //
   // prepare input tree
   TString  chunkList = gSystem->GetFromPipe(TString::Format("cat %s",fResidualList.Data()).Data());
@@ -483,39 +477,12 @@ void AliTPCDcalibRes::CollectData()
 
       ntrSelChunk++;
 
-      //int qb0 = GetQBin(q2ptTPC);
-      //int qb1 = GetQBin(q2pt);
-      //if (qb0!=qb1) {
-      //printf("Diff at ev %d: TPC %+.3f->%d Fit: %.3f->%d, ncl:%3d |S:%2d-%2d\n",
-      //  itr,q2ptTPC,qb0, q2pt,qb1,nCl,arrSectID[0],arrSectID[nCl-1]);
-      //}
-      // now fill the local trees and statistics
-      float voxVars[kVoxHDim]={0}; // voxel variables (unbinned)
-      for (int icl=nCl;icl--;) {
-
-	if (arrX[icl]<kInvalidR) continue; // rejected outlier
-	int sectID = arrSectID[icl]; // 0-35 numbering
-	// 
-	// calculate voxel variables and bins
-	// 
-	if (!FindVoxelBin(sectID, tgSlope[icl], q2pt, arrX[icl], arrYCl[icl], arrZCl[icl], dts.bvox, voxVars)) continue;
-
-	dts.dy   = (arrDY[icl]+fMaxDY)*fDeltaYbinI;
-	dts.dz   = (arrDZ[icl]+fMaxDZ)*fDeltaZbinI;
-	//
-	fTmpTree[sectID]->Fill();
-	//
-	// fill statistics on distribution within the voxel, last dimension, kVoxV is for Nentries
-	ULong64_t binToFill = GetBin2Fill(fNBProdSt,dts.bvox,kVoxV); // bin of sector stat histo
-	float &binEntries = fArrNDStat[sectID]->At(binToFill); // entries in the voxel
-	float oldEntries  = binEntries++;
-	float norm        = 1.f/binEntries;
-	for (int iv=kVoxDim;iv--;) {
-	  float &mean = fArrNDStat[sectID]->At(binToFill+iv-kVoxV);
-	  mean = ( mean*oldEntries + voxVars[iv]) * norm; // account new bin entry in averages calculation
-	}
-	//
-      } // loop over clusters
+      if (mode==kExtractMode) {
+	FillLocalResidualsTrees(q2pt,nCl,tgSlope,arrSectID,arrX,arrYCl,arrZCl,arrDY,arrDZ);
+      }
+      else if (mode==kClosureTestMode) {
+	FillCorrectedResiduals(timeStamp,q2pt,tgLam,nCl,tgSlope,arrSectID,arrX,arrYCl,arrZCl,arrDY,arrDZ);
+      }
     } // loop over tracks
     //
     swc.Stop();
@@ -555,8 +522,107 @@ void AliTPCDcalibRes::CollectData()
 
   AliSysInfo::AddStamp("ProjTreeLocSave");
 
-  WriteStatHistos();
+  if (mode==kExtractMode) WriteStatHistos();
   //
+}
+
+//________________________________________________
+void AliTPCDcalibRes::FillLocalResidualsTrees(const float q2pt, int nCl, const float tgSlope[kNPadRows], const int arrSectID[kNPadRows], 
+			     const float arrX[kNPadRows], const float arrYCl[kNPadRows], const float arrZCl[kNPadRows], 
+			     const float arrDY[kNPadRows], const float arrDZ[kNPadRows])
+{
+  // fill local trees with binned data
+  float voxVars[kVoxHDim]={0}; // voxel variables (unbinned)
+  for (int icl=nCl;icl--;) {
+    if (arrX[icl]<kInvalidR) continue; // rejected outlier
+    int sectID = arrSectID[icl]; // 0-35 numbering
+    // 
+    // calculate voxel variables and bins
+    // 
+    if (!FindVoxelBin(sectID, tgSlope[icl], q2pt, arrX[icl], arrYCl[icl], arrZCl[icl], dts.bvox, voxVars)) continue;    
+    dts.dy   = (arrDY[icl]+fMaxDY)*fDeltaYbinI;
+    dts.dz   = (arrDZ[icl]+fMaxDZ)*fDeltaZbinI;
+    //
+    tmpTree[sectID]->Fill();
+    //
+    // fill statistics on distribution within the voxel, last dimension, kVoxV is for Nentries
+    ULong64_t binToFill = GetBin2Fill(fNBProdSt,dts.bvox,kVoxV); // bin of sector stat histo
+    float &binEntries = arrNDstat[sectID]->At(binToFill); // entries in the voxel
+    float oldEntries  = binEntries++;
+    float norm        = 1.f/binEntries;
+    for (int iv=kVoxDim;iv--;) {
+      float &mean = arrNDstat[sectID]->At(binToFill+iv-kVoxV);
+      mean = ( mean*oldEntries + voxVars[iv]) * norm; // account new bin entry in averages calculation
+    }
+    //
+  } // loop over clusters
+}
+
+//________________________________________________
+void AliTPCDcalibRes::FillCorrectedResiduals(const int t, const float q2pt, const float tgLam, int nCl, 
+			    const float tgSlope[kNPadRows], const int arrSectID[kNPadRows], 
+			    const float arrX[kNPadRows], const float arrYCl[kNPadRows], const float arrZCl[kNPadRows], 
+			    const float arrDY[kNPadRows], const float arrDZ[kNPadRows])
+{
+  // fill local trees result of closure test: corrected distortions
+  
+  float voxVars[kVoxHDim]={0}; // voxel variables (unbinned)
+  for (int icl=nCl;icl--;) {
+    if (arrX[icl]<kInvalidR) continue; // rejected outlier
+    int sectID = arrSectID[icl]; // 0-35 numbering
+    // 
+    // extract correction
+    // calculate voxel variables and bins
+    if (!FindVoxelBin(sectID, tgSlope[icl], q2pt, arrX[icl], arrYCl[icl], arrZCl[icl], dtc.bvox, voxVars)) continue;    
+    int row159 = GetRowID(arrX[icl]);
+    if (row159<0) continue;
+    float corr[3];
+
+    fChebCorr->Eval(sectID, row159, arrYCl[icl]/arrX[icl], arrZCl[icl]/arrX[icl], corr);
+    // 
+    dtc.t   = t;
+    dtc.dyR = arrDY[icl];
+    dtc.dzR = arrDZ[icl];
+
+    dtc.dyC = arrDY[icl] - (corr[kResY]-corr[kResX]*tgSlope[icl]);
+    dtc.dzC = arrDZ[icl] - (corr[kResZ]+corr[kResX]*tgLam);
+
+    dtc.q2pt   = q2pt;
+    dtc.tgLam  = tgLam;
+    dtc.tgSlp  = tgSlope[icl];
+    dtc.x      = arrX[icl];
+    dtc.y      = arrYCl[icl];
+    dtc.z      = arrZCl[icl];
+    //
+    tmpTree[sectID]->Fill();
+    //
+  } // loop over clusters
+}
+
+//________________________________________________
+void AliTPCDcalibRes::CreateLocalResidualsTrees(int mode)
+{
+  // temporary trees for local delta's storage
+  //
+  TString namef;
+  for (int is=0;is<kNSect2;is++) {
+    if      (mode==kExtractMode)     namef = Form("%s%d.root",kLocalResFileName,is);
+    else if (mode==kClosureTestMode) namef = Form("%s%d.root",kClosureTestFileName,is);
+    else ::Fatal("CreateLocalResidualsTrees","unknown mode: %d",mode);
+    tmpFile[is] = TFile::Open(namef.Data(),"recreate");
+    tmpTree[is] = new TTree(Form("ts%d",is),"");
+    //
+    if (mode==kExtractMode) {
+      tmpTree[is]->Branch("dts",&dtsP);
+      //tmpTree[is]->SetAutoFlush(150000);
+      //
+      statHist[is] = CreateVoxelStatHisto(is);
+      arrNDstat[is] = (TNDArrayT<float>*)&statHist[is]->GetArray();
+    }
+    else if (mode==kClosureTestMode) {
+      tmpTree[is]->Branch("dtc",&dtcP);
+    }
+  }
 }
 
 //__________________________________________________________________________________
@@ -663,6 +729,16 @@ Bool_t AliTPCDcalibRes::CompareToHelix(int np, const float *x, const float *y, c
 }
 
 //________________________________________________
+void AliTPCDcalibRes::ClosureTest()
+{
+  // correct distortions
+  CollectData(kClosureTestMode);
+  sw.Stop();
+  printf("Total time: ");
+  sw.Print();
+}
+
+//________________________________________________
 void AliTPCDcalibRes::ProcessResiduals()
 {
   // project local trees, extract distortions
@@ -689,7 +765,7 @@ void AliTPCDcalibRes::ProcessResiduals()
     AliSysInfo::AddStamp("ProjResid",is);
     //
     if (fDeleteSectorTrees) {
-      TString sectFileName = Form("%s%d.root",kTmpFileName,is);
+      TString sectFileName = Form("%s%d.root",kLocalResFileName,is);
       ::Info(" AliTPCcalibAlignInterpolation::ProcessResidualsInTimeBin","Deleting %s\n",sectFileName.Data());
       unlink(sectFileName.Data());
     }
@@ -777,7 +853,7 @@ void AliTPCDcalibRes::ProcessSectorResiduals(int is, bstat_t &voxStat)
   printf("ProcessingSectoResiduals %d\n",is);
   AliSysInfo::AddStamp("ProcSectRes",is,0,0,0);
   //
-  TString sectFileName = Form("%s%d.root",kTmpFileName,is);
+  TString sectFileName = Form("%s%d.root",kLocalResFileName,is);
   TFile* sectFile = TFile::Open(sectFileName.Data());
   if (!sectFile) {::Fatal("ProcessSectorResiduals",
 			  "file %s not found",sectFileName.Data());}

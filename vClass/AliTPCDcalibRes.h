@@ -36,7 +36,7 @@ class AliTPCDcalibRes: public TObject
   enum {kNSect=18,kNSect2=2*kNSect,kNROC=4*kNSect,kNPadRows=159, kNRowIROC=63, kNRowOROC1=64, kNRowOROC2=32};
   enum {kNQBins=4};
   enum {kAlignmentBugFixedBit = AliTPCcalibAlignInterpolation::kAlignmentBugFixedBit};
-
+  enum {kExtractMode, kClosureTestMode};
   //
   // the voxels are defined in following space
   enum {kVoxQ,   // tg of track inclination wrt pad row, each voxel has its own range according to F,X,Y
@@ -59,7 +59,28 @@ class AliTPCDcalibRes: public TObject
     UChar_t dz;   // Z residual
     UChar_t bvox[kVoxDim]; // voxel bin info: kVoxQ,kVoxF,kVoxX,kVoxZ
   };
-  
+ dts_t dts, *dtsP = &dts; 
+
+ // structure for closure test residuals
+ struct dtc_t
+ {
+   Int_t   t;    // time stamp
+   Float_t dyR;   // raw Y residual
+   Float_t dzR;   // raw Z residual
+   Float_t dyC;   // corrected Y residual
+   Float_t dzC;   // corrected Z residual
+   Float_t q2pt;
+   Float_t tgLam;
+   Float_t tgSlp;
+   Float_t x;
+   Float_t y;
+   Float_t z;
+   UChar_t bvox[kVoxDim]; // voxel bin info: kVoxQ,kVoxF,kVoxX,kVoxZ
+   //
+   dtc_t() {memset(this,0,sizeof(dtc_t));}
+ };
+ dtc_t dtc, *dtcP = &dtc;
+ 
   struct bres_t  {
     Float_t D[kResDim];      // values of extracted distortions
     Float_t E[kResDim];      // their errors
@@ -97,7 +118,17 @@ public:
 	    ,float maxQ2Pt,int nY2XBins,int nZ2XBins,int nXBins,int nDeltaBinsY,int nDeltaBinsZ
 	    ,int maxTracks,
 	    Bool_t fixAlignmentBug,int cacheInp,int learnSize,Bool_t switchCache);
-  void CollectData();
+  void CollectData(int mode = kExtractMode);
+  void FillLocalResidualsTrees(const float q2pt, int ncl, const float tgSlope[kNPadRows], const int arrSectID[kNPadRows], 
+			       const float arrX[kNPadRows], const float arrYCl[kNPadRows], const float arrZCl[kNPadRows], 
+			       const float arrDY[kNPadRows], const float arrDZ[kNPadRows]);
+  
+  void FillCorrectedResiduals(const int t,  const float q2pt, const float tgLam, int nCl, 
+			      const float tgSlope[kNPadRows], const int arrSectID[kNPadRows], 
+			      const float arrX[kNPadRows], const float arrYCl[kNPadRows], const float arrZCl[kNPadRows], 
+			      const float arrDY[kNPadRows], const float arrDZ[kNPadRows]);
+  void ClosureTest();
+  void CreateLocalResidualsTrees(int mode);
   void ProcessResiduals();
   void WriteVoxelDefinitions();
   void ProcessSectorResiduals(int is, bstat_t &voxStat);
@@ -313,11 +344,14 @@ protected:
   static const float kMaxX;   // max X to cover
   static const float kMaxZ2X;   // max z/x
   static const float kZLim;   // endcap position
-  static const char* kTmpFileName;
+  static const char* kLocalResFileName;
+  static const char* kClosureTestFileName;
   static const char* kStatOut;
   static const char* kResOut;
   static const char* kDriftFileName;
   static const float kDeadZone;  // dead zone on sector edges in cm
+  static const float kInvalidR;  // to signal invalid R
+  static const float kInvalidRes; // to signal invalid residual
   static const ULong64_t kMByte;
   static const Float_t kZeroK; // zero kernel weight
 
