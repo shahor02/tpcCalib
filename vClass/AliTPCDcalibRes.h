@@ -59,7 +59,6 @@ class AliTPCDcalibRes: public TObject
     UChar_t dz;   // Z residual
     UChar_t bvox[kVoxDim]; // voxel bin info: kVoxQ,kVoxF,kVoxX,kVoxZ
   };
- dts_t dts, *dtsP = &dts; 
 
  // structure for closure test residuals
  struct dtc_t
@@ -79,7 +78,6 @@ class AliTPCDcalibRes: public TObject
    //
    dtc_t() {memset(this,0,sizeof(dtc_t));}
  };
- dtc_t dtc, *dtcP = &dtc;
  
   struct bres_t  {
     Float_t D[kResDim];      // values of extracted distortions
@@ -161,7 +159,7 @@ public:
 				    int minStat=20, float maxGChi2=5, int minYBinsOK=3);
   void  FixAlignmentBug(int sect, float q2pt, float bz, float& alp, float& x, float &z, float &deltaY, float &deltaZ);
 
-  Bool_t ValidateTrack(int nCl, float *arrX, const float* arrDY, const float* arrDZ, const int *arrSectID);
+  Bool_t ValidateTrack();
   Bool_t CompareToHelix(int nCl, const float *x, const float *y, const float *z, 
 			const float *phi,const int *sect36,
 			float &q2ptFit, float &tgLamFit, float* tgSlope,
@@ -337,7 +335,25 @@ protected:
 
   TH1F* fHDelY;                          //! work histo for delta Y fits
   TH1F* fHDelZ;                          //! work histo for delta Z fits
-  
+  //
+  // ----------------------------data exchange structures for trees and between routines
+  dts_t fDTS;                            //! binned residuals
+  dtc_t fDTC;                            //! corrected residuals for closure test
+  //
+  // ---------------------------track data-----------------------------------
+  int   fNCl;                             //! number of clusters
+  float fQ2Pt;                            //! fitted q2pt
+  float fTgLam;                           //! fitted tgLambda
+  float fArrPhi[kNPadRows];               //! cluster phi
+  float fArrDY[kNPadRows];                //! cluster residual Y
+  float fArrDZ[kNPadRows];                //! cluster residual Z
+  float fArrX[kNPadRows];                 //! cluster X (row)
+  float fArrYCl[kNPadRows];               //! cluster Y
+  float fArrZCl[kNPadRows];               //! cluster Z
+  float fArrYTr[kNPadRows];               //! ref track Y
+  float fArrZTr[kNPadRows];               //! ref tracz Z
+  float fArrTgSlp[kNPadRows];             //! track inclination at padrow
+  int   fArrSectID[kNPadRows];            //! cluster sector id 
   //
   static const float kSecDPhi;
   static const float kMinX;   // min X to cover

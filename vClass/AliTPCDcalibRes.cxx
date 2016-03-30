@@ -128,6 +128,13 @@ AliTPCDcalibRes::AliTPCDcalibRes( ) :
   ,fHDelY(0)
   ,fHDelZ(0)
 
+  ,fDTS()
+  ,fDTC()
+
+  ,fNCl(0)
+  ,fQ2Pt(0)
+  ,fTgLam(0)
+
 {
   for (int i=0;i<kResDim;i++) {
     for (int j=0;i<2;j++) fNPCheb[i][j] = 15;
@@ -330,12 +337,7 @@ void AliTPCDcalibRes::CollectData(int mode)
     int nTracks = tree->GetEntries();
     printf("Processing %d tracks of %s\n",nTracks,fileNameString.Data());
 
-    float arrPhi[kNPadRows],arrDY[kNPadRows],arrDZ[kNPadRows],
-      arrX[kNPadRows],arrYCl[kNPadRows],arrZCl[kNPadRows],
-      arrYTr[kNPadRows],arrZTr[kNPadRows],
-      residHelixY[kNPadRows],residHelixZ[kNPadRows],tgSlope[kNPadRows];
-    //
-    int arrSectID[kNPadRows], nCl=0;
+    float residHelixY[kNPadRows],residHelixZ[kNPadRows];
     //
     // reset the cache when swithching between the timeStamp and Event read modes
     Bool_t lastReadMatched = kFALSE; 
@@ -380,27 +382,27 @@ void AliTPCDcalibRes::CollectData(int mode)
       for (int ip=0;ip<npValid;ip++) { // 1st fill selected track data to buffer for eventual outlier rejection
 	if (vR[ip]<kInvalidR || vDY[ip]<kInvalidRes || vDYITS[ip]<kInvalidRes) continue;
 	//
-	arrX[nCl]   = vR[ip];  // X (R) is the same for cluster and track
-	arrZTr[nCl] = vZ[ip];  // Z of ITS track was stored!!
-	arrDY[nCl]  = vDY[ip]; // this is also the track coordinate in cluster frame
-	arrDZ[nCl]  = vDZ[ip];
-	arrPhi[nCl] = vPhi[ip];
+	fArrX[nCl]   = vR[ip];  // X (R) is the same for cluster and track
+	fArrZTr[nCl] = vZ[ip];  // Z of ITS track was stored!!
+	fArrDY[nCl]  = vDY[ip]; // this is also the track coordinate in cluster frame
+	fArrDZ[nCl]  = vDZ[ip];
+	fArrPhi[nCl] = vPhi[ip];
 	int rocID = TMath::Nint(vSec[ip]);
 	//
-	// !!! arrZTr corresponds to ITS track Z, we need that of TRD-ITS
-	arrZTr[nCl] += arrDZ[nCl] - vDZITS[ip]; // recover ITS-TRD track position from ITS and deltas
+	// !!! fArrZTr corresponds to ITS track Z, we need that of TRD-ITS
+	fArrZTr[nCl] += fArrDZ[nCl] - vDZITS[ip]; // recover ITS-TRD track position from ITS and deltas
 	
 	if (fFixAlignmentBug && !param->TestBit(kAlignmentBugFixedBit)) {
-	  FixAlignmentBug(rocID, q2pt, fBz, arrPhi[nCl], arrX[nCl], arrZTr[nCl], arrDY[nCl],arrDZ[nCl]);
+	  FixAlignmentBug(rocID, q2pt, fBz, fArrPhi[nCl], fArrX[nCl], fArrZTr[nCl], fArrDY[nCl],fArrDZ[nCl]);
 	}
-	if (arrPhi[nCl]<0) arrPhi[nCl] += 2.*TMath::Pi();
+	if (fArrPhi[nCl]<0) fArrPhi[nCl] += 2.*TMath::Pi();
 	//
 	// calculate drift velocity calibration if available
-	float dzDrift = GetDriftCorrection(arrZTr[nCl],arrX[nCl],arrPhi[nCl],rocID);
+	float dzDrift = GetDriftCorrection(fArrZTr[nCl],fArrX[nCl],fArrPhi[nCl],rocID);
 	// apply drift velocity calibration if available
-	arrDZ[nCl] += dzDrift;
+	fArrDZ[nCl] += dzDrift;
 	//
-	arrSectID[nCl] = rocID%kNSect2; // 0-36 for sectors from A0 to C17
+	fArrSectID[nCl] = rocID%kNSect2; // 0-36 for sectors from A0 to C17
 	//
 	nCl++;
       }
@@ -411,8 +413,8 @@ void AliTPCDcalibRes::CollectData(int mode)
       ntrSelChunkWO++;
       //
       float q2ptTPC = q2pt;
-      Bool_t resH = CompareToHelix(nCl, arrX, arrDY, arrZTr, arrPhi, arrSectID,
-				   q2pt,tgLam,tgSlope,
+      Bool_t resH = CompareToHelix(nCl, fArrX, fArrDY, fArrZTr, fArrPhi, fArrSectID,
+				   q2pt,tgLam,fArrTgSlp,
 				   residHelixY,residHelixZ,
 				   fMaxDevYHelix,fMaxDevZHelix);
       //
@@ -430,58 +432,58 @@ void AliTPCDcalibRes::CollectData(int mode)
       nCl = 0;
       for (int ip=0;ip<nc0;ip++) {
 	
-	float sna = TMath::Sin(arrPhi[ip]-(0.5f +arrSectID[ip]%kNSect)*kSecDPhi);
+	float sna = TMath::Sin(fArrPhi[ip]-(0.5f +fArrSectID[ip]%kNSect)*kSecDPhi);
 	float csa = TMath::Sqrt((1.f-sna)*(1.f+sna));
 	//
 	// by using propagation in cluster frame in AliTPCcalibAlignInterpolation::Process,
 	// the X of the track is evaluated not at the pad-row x=r*csa but at x=r*sca-dy*sna
-	double xrow = arrX[ip]*csa;
-	double dx   = arrDY[ip]*sna;
+	double xrow = fArrX[ip]*csa;
+	double dx   = fArrDY[ip]*sna;
 	double xtr  = xrow - dx;
-	double ycl  = arrX[ip]*sna;      // cluster Y in the sector frame
-	double ytr  = ycl + arrDY[ip]*csa; // track Y in the sector frame at x=xtr is 
+	double ycl  = fArrX[ip]*sna;      // cluster Y in the sector frame
+	double ytr  = ycl + fArrDY[ip]*csa; // track Y in the sector frame at x=xtr is 
 	//
-	double ztr  = arrZTr[ip];          // Z of the track at x=xtr
-	double zcl  = ztr - arrDZ[ip];     // and the Z of the cluster is Ztr-deltaZ
+	double ztr  = fArrZTr[ip];          // Z of the track at x=xtr
+	double zcl  = ztr - fArrDZ[ip];     // and the Z of the cluster is Ztr-deltaZ
 	//
 	// Now we need to take the track to real pad-row X
 	// use linear extrapolation:
-	float tgs = tgSlope[ip];
+	float tgs = fArrTgSlp[ip];
 	ytr += dx*tgs;
 	double csXtrInv = TMath::Sqrt(1.+tgs*tgs); // (inverse cosine of track angle)
 	ztr += dx*tgLam*csXtrInv;
 	//
 	// assign to arrays and recalculate residuals
-	arrX[nCl]   = xrow;
-	arrYTr[nCl] = ytr;
-	arrZTr[nCl] = ztr;
+	fArrX[nCl]   = xrow;
+	fArrYTr[nCl] = ytr;
+	fArrZTr[nCl] = ztr;
 	//
-	arrYCl[nCl] = ycl;
-	arrZCl[nCl] = zcl;
-	arrDY[nCl]  = ytr - ycl;
-	arrDZ[nCl]  = ztr - zcl;
+	fArrYCl[nCl] = ycl;
+	fArrZCl[nCl] = zcl;
+	fArrDY[nCl]  = ytr - ycl;
+	fArrDZ[nCl]  = ztr - zcl;
 	//
 	// we don't want under/overflows
-	if (TMath::Abs(arrDY[nCl])>fMaxDY-kEps) continue;
-	if (TMath::Abs(arrDZ[nCl])>fMaxDZ-kEps) continue;
+	if (TMath::Abs(fArrDY[nCl])>fMaxDY-kEps) continue;
+	if (TMath::Abs(fArrDZ[nCl])>fMaxDZ-kEps) continue;
 	//
-	if (arrX[nCl]<kMinX || arrX[nCl]>kMaxX) continue;
-	if (TMath::Abs(arrZCl[nCl])>kZLim) continue;;
+	if (fArrX[nCl]<kMinX || fArrX[nCl]>kMaxX) continue;
+	if (TMath::Abs(fArrZCl[nCl])>kZLim) continue;;
 	//
 	// End of manipulations to go to the sector frame
 	//
 	nCl++;
       }
 
-      if (fFilterOutliers && !ValidateTrack(nCl, arrX, arrDY,arrDZ, arrSectID)) continue;
+      if (fFilterOutliers && !ValidateTrack()) continue;
 
       ntrSelChunk++;
 
       if (mode==kExtractMode) {
-	FillLocalResidualsTrees(q2pt,nCl,tgSlope,arrSectID,arrX,arrYCl,arrZCl,arrDY,arrDZ);
+	FillLocalResidualsTrees(q2pt,nCl,fArrTgSlp,fArrSectID,fArrX,fArrYCl,fArrZCl,fArrDY,fArrDZ);
       }
       else if (mode==kClosureTestMode) {
-	FillCorrectedResiduals(timeStamp,q2pt,tgLam,nCl,tgSlope,arrSectID,arrX,arrYCl,arrZCl,arrDY,arrDZ);
+	FillCorrectedResiduals(timeStamp,q2pt,tgLam,nCl,fArrTgSlp,fArrSectID,fArrX,fArrYCl,fArrZCl,fArrDY,fArrDZ);
       }
     } // loop over tracks
     //
@@ -527,26 +529,26 @@ void AliTPCDcalibRes::CollectData(int mode)
 }
 
 //________________________________________________
-void AliTPCDcalibRes::FillLocalResidualsTrees(const float q2pt, int nCl, const float tgSlope[kNPadRows], const int arrSectID[kNPadRows], 
-			     const float arrX[kNPadRows], const float arrYCl[kNPadRows], const float arrZCl[kNPadRows], 
-			     const float arrDY[kNPadRows], const float arrDZ[kNPadRows])
+void AliTPCDcalibRes::FillLocalResidualsTrees(const float q2pt, int nCl, const float fArrTgSlp[kNPadRows], const int fArrSectID[kNPadRows], 
+			     const float fArrX[kNPadRows], const float fArrYCl[kNPadRows], const float fArrZCl[kNPadRows], 
+			     const float fArrDY[kNPadRows], const float fArrDZ[kNPadRows])
 {
   // fill local trees with binned data
   float voxVars[kVoxHDim]={0}; // voxel variables (unbinned)
   for (int icl=nCl;icl--;) {
-    if (arrX[icl]<kInvalidR) continue; // rejected outlier
-    int sectID = arrSectID[icl]; // 0-35 numbering
+    if (fArrX[icl]<kInvalidR) continue; // rejected outlier
+    int sectID = fArrSectID[icl]; // 0-35 numbering
     // 
     // calculate voxel variables and bins
     // 
-    if (!FindVoxelBin(sectID, tgSlope[icl], q2pt, arrX[icl], arrYCl[icl], arrZCl[icl], dts.bvox, voxVars)) continue;    
-    dts.dy   = (arrDY[icl]+fMaxDY)*fDeltaYbinI;
-    dts.dz   = (arrDZ[icl]+fMaxDZ)*fDeltaZbinI;
+    if (!FindVoxelBin(sectID, fArrTgSlp[icl], q2pt, fArrX[icl], fArrYCl[icl], fArrZCl[icl], fDTS.bvox, voxVars)) continue;    
+    fDTS.dy   = (fArrDY[icl]+fMaxDY)*fDeltaYbinI;
+    fDTS.dz   = (fArrDZ[icl]+fMaxDZ)*fDeltaZbinI;
     //
     tmpTree[sectID]->Fill();
     //
     // fill statistics on distribution within the voxel, last dimension, kVoxV is for Nentries
-    ULong64_t binToFill = GetBin2Fill(fNBProdSt,dts.bvox,kVoxV); // bin of sector stat histo
+    ULong64_t binToFill = GetBin2Fill(fNBProdSt,fDTS.bvox,kVoxV); // bin of sector stat histo
     float &binEntries = arrNDstat[sectID]->At(binToFill); // entries in the voxel
     float oldEntries  = binEntries++;
     float norm        = 1.f/binEntries;
@@ -560,39 +562,39 @@ void AliTPCDcalibRes::FillLocalResidualsTrees(const float q2pt, int nCl, const f
 
 //________________________________________________
 void AliTPCDcalibRes::FillCorrectedResiduals(const int t, const float q2pt, const float tgLam, int nCl, 
-			    const float tgSlope[kNPadRows], const int arrSectID[kNPadRows], 
-			    const float arrX[kNPadRows], const float arrYCl[kNPadRows], const float arrZCl[kNPadRows], 
-			    const float arrDY[kNPadRows], const float arrDZ[kNPadRows])
+			    const float fArrTgSlp[kNPadRows], const int fArrSectID[kNPadRows], 
+			    const float fArrX[kNPadRows], const float fArrYCl[kNPadRows], const float fArrZCl[kNPadRows], 
+			    const float fArrDY[kNPadRows], const float fArrDZ[kNPadRows])
 {
   // fill local trees result of closure test: corrected distortions
   
   float voxVars[kVoxHDim]={0}; // voxel variables (unbinned)
   for (int icl=nCl;icl--;) {
-    if (arrX[icl]<kInvalidR) continue; // rejected outlier
-    int sectID = arrSectID[icl]; // 0-35 numbering
+    if (fArrX[icl]<kInvalidR) continue; // rejected outlier
+    int sectID = fArrSectID[icl]; // 0-35 numbering
     // 
     // extract correction
     // calculate voxel variables and bins
-    if (!FindVoxelBin(sectID, tgSlope[icl], q2pt, arrX[icl], arrYCl[icl], arrZCl[icl], dtc.bvox, voxVars)) continue;    
-    int row159 = GetRowID(arrX[icl]);
+    if (!FindVoxelBin(sectID, fArrTgSlp[icl], q2pt, fArrX[icl], fArrYCl[icl], fArrZCl[icl], fDTC.bvox, voxVars)) continue;    
+    int row159 = GetRowID(fArrX[icl]);
     if (row159<0) continue;
     float corr[3];
 
-    fChebCorr->Eval(sectID, row159, arrYCl[icl]/arrX[icl], arrZCl[icl]/arrX[icl], corr);
+    fChebCorr->Eval(sectID, row159, fArrYCl[icl]/fArrX[icl], fArrZCl[icl]/fArrX[icl], corr);
     // 
-    dtc.t   = t;
-    dtc.dyR = arrDY[icl];
-    dtc.dzR = arrDZ[icl];
+    fDTC.t   = t;
+    fDTC.dyR = fArrDY[icl];
+    fDTC.dzR = fArrDZ[icl];
 
-    dtc.dyC = arrDY[icl] - (corr[kResY]-corr[kResX]*tgSlope[icl]);
-    dtc.dzC = arrDZ[icl] - (corr[kResZ]+corr[kResX]*tgLam);
+    fDTC.dyC = fArrDY[icl] - (corr[kResY]-corr[kResX]*fArrTgSlp[icl]);
+    fDTC.dzC = fArrDZ[icl] - (corr[kResZ]+corr[kResX]*tgLam);
 
-    dtc.q2pt   = q2pt;
-    dtc.tgLam  = tgLam;
-    dtc.tgSlp  = tgSlope[icl];
-    dtc.x      = arrX[icl];
-    dtc.y      = arrYCl[icl];
-    dtc.z      = arrZCl[icl];
+    fDTC.q2pt   = q2pt;
+    fDTC.tgLam  = tgLam;
+    fDTC.tgSlp  = fArrTgSlp[icl];
+    fDTC.x      = fArrX[icl];
+    fDTC.y      = fArrYCl[icl];
+    fDTC.z      = fArrZCl[icl];
     //
     tmpTree[sectID]->Fill();
     //
@@ -604,6 +606,8 @@ void AliTPCDcalibRes::CreateLocalResidualsTrees(int mode)
 {
   // temporary trees for local delta's storage
   //
+  static dts_t *dtsP = &fDTS;
+  static dtc_t *dtcP = &fDTC;
   TString namef;
   for (int is=0;is<kNSect2;is++) {
     if      (mode==kExtractMode)     namef = Form("%s%d.root",kLocalResFileName,is);
@@ -627,9 +631,10 @@ void AliTPCDcalibRes::CreateLocalResidualsTrees(int mode)
 
 //__________________________________________________________________________________
 Bool_t AliTPCDcalibRes::CompareToHelix(int np, const float *x, const float *y, const float *z, 
-		      const float *phi,const int *sect36,
-		      float &q2ptFit, float &tgLamFit, float* tgSlope,
-		      float *resHelixY, float *resHelixZ, float maxDevY, float maxDevZ)
+				       const float *phi,const int *sect36,
+				       float &q2ptFit, float &tgLamFit, float* fArrTgSlp,
+				       float *resHelixY, float *resHelixZ, float maxDevY, 
+				       float maxDevZ)
 {
   // compare track to helix, refit q/pt and tgLambda and build array of tg(slope) at pad-rows
   const double kEps = 1e-12;
@@ -719,8 +724,8 @@ Bool_t AliTPCDcalibRes::CompareToHelix(int np, const float *x, const float *y, c
     // and the slope in sector frame is +-1/tg(acos(cstalp)) = +-cstalp/sqrt(1-cstalp^2)
     // The sign is defined by the fact that in B+ the slope of q- should increase with X.
     // Since the derivative of cstalp/sqrt(1-cstalp^2) on X is positive, just look on qB
-    tgSlope[ip] = cstalp/TMath::Sqrt((1.-cstalp)*(1.+cstalp));
-    if (q2ptFit*fBz>0) tgSlope[ip] = -tgSlope[ip];
+    fArrTgSlp[ip] = cstalp/TMath::Sqrt((1.-cstalp)*(1.+cstalp));
+    if (q2ptFit*fBz>0) fArrTgSlp[ip] = -fArrTgSlp[ip];
   }
   //
   //  if (TMath::Abs(hmxY-hmnY)>maxDevY || TMath::Abs(hmxZ-hmnZ)>maxDevZ)
@@ -862,7 +867,7 @@ void AliTPCDcalibRes::ProcessSectorResiduals(int is, bstat_t &voxStat)
   if (!sectTree) {::Fatal("ProcessSectorResiduals",
 			 "tree %s is not found in file %s",treeName.Data(),sectFileName.Data());}
   //
-  dts_t dts, *dtsP = &dts; 
+  dts_t *dtsP = &fDTS; 
   sectTree->SetBranchAddress("dts",&dtsP);
   int npoints = sectTree->GetEntries();
   //
@@ -873,10 +878,10 @@ void AliTPCDcalibRes::ProcessSectorResiduals(int is, bstat_t &voxStat)
   //
   for (int ip=0;ip<npoints;ip++) {
     sectTree->GetEntry(ip);
-    UShort_t  binDY = dts.dy;
-    UShort_t  binDZ = dts.dz;
-    ULong64_t binToFillY = GetBin2Fill(fNBProdDY,dts.bvox,binDY);
-    ULong64_t binToFillZ = GetBin2Fill(fNBProdDZ,dts.bvox,binDZ);
+    UShort_t  binDY = fDTS.dy;
+    UShort_t  binDZ = fDTS.dz;
+    ULong64_t binToFillY = GetBin2Fill(fNBProdDY,fDTS.bvox,binDY);
+    ULong64_t binToFillZ = GetBin2Fill(fNBProdDZ,fDTS.bvox,binDZ);
     //
     ndArrY->At(binToFillY)++;
     ndArrZ->At(binToFillZ)++;
@@ -1341,21 +1346,20 @@ THn* AliTPCDcalibRes::CreateSectorResidualsHisto(int sect, int nbDelta,float ran
 //
 
 //__________________________________________________________________________________
-Bool_t AliTPCDcalibRes::ValidateTrack(int nCl, float *arrX, const float* arrDY, 
-				      const float* arrDZ, const int *arrSectID)
+Bool_t AliTPCDcalibRes::ValidateTrack()
 {
   // if (nCl<fMinNCl) return kFALSE;
  if (nCl<fNVoisinMALong) return kFALSE;
 
   Bool_t rejCl[kNPadRows];
   float rmsLong = 0.f;
-  int nRej = CheckResiduals(nCl,arrX,arrDY,arrDZ,arrSectID,rejCl, rmsLong, 
+  int nRej = CheckResiduals(nCl,fArrX,fArrDY,fArrDZ,fArrSectID,rejCl, rmsLong, 
 			    fNVoisinMA, fMaxStdDevMA,fNVoisinMALong);
   if (float(nRej)/nCl > fMaxRecFrac) return kFALSE;
   if (rmsLong>fMaxRMSLong) return kFALSE;
   //
   // flag outliers
-  for (int i=nCl;i--;) if (rejCl[i]) arrX[i] = -1;
+  for (int i=nCl;i--;) if (rejCl[i]) fArrX[i] = -1;
 
   return kTRUE;
 }
