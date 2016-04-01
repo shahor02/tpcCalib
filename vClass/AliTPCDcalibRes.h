@@ -1,6 +1,7 @@
 #ifndef ALITPCCALIBRES_H
 #define ALITPCCALIBRES_H
 #include <TSystem.h>
+#include <TNamed.h>
 #include <TTree.h>
 #include <TBranch.h>
 #include <TFile.h>
@@ -29,7 +30,7 @@
 #include "AliSymMatrix.h"
 #include "AliTPCChebCorr.h"
 
-class AliTPCDcalibRes: public TObject
+class AliTPCDcalibRes: public TNamed
 {
  public:
   enum {kEpanechnikovKernel, kGaussianKernel};  // defined kernels
@@ -109,22 +110,18 @@ class AliTPCDcalibRes: public TObject
 
 public:
 
-  AliTPCDcalibRes();
+  AliTPCDcalibRes(int run=0,Long64_t tmin=0,Long64_t tmax=9999999999,const char* resList=0);
   virtual ~AliTPCDcalibRes();
   
-  void Init(int run,const char * residualList,Long64_t tmin,Long64_t tmax,float maxDY,float maxDZ
-	    ,float maxQ2Pt,int nY2XBins,int nZ2XBins,int nXBins,int nDeltaBinsY,int nDeltaBinsZ
-	    ,int maxTracks,
-	    Bool_t fixAlignmentBug,int cacheInp,int learnSize,Bool_t switchCache);
+  void ProcessFromDeltaTrees();
+  void ProcessFromLocalBinnedTrees();
+  void ProcessFromStatTree();
+  void Save(const char* name=0);
+
+  void Init();
   void CollectData(int mode = kExtractMode);
-  void FillLocalResidualsTrees(const float q2pt, int ncl, const float tgSlope[kNPadRows], const int arrSectID[kNPadRows], 
-			       const float arrX[kNPadRows], const float arrYCl[kNPadRows], const float arrZCl[kNPadRows], 
-			       const float arrDY[kNPadRows], const float arrDZ[kNPadRows]);
-  
-  void FillCorrectedResiduals(const int t,  const float q2pt, const float tgLam, int nCl, 
-			      const float tgSlope[kNPadRows], const int arrSectID[kNPadRows], 
-			      const float arrX[kNPadRows], const float arrYCl[kNPadRows], const float arrZCl[kNPadRows], 
-			      const float arrDY[kNPadRows], const float arrDZ[kNPadRows]);
+  void FillLocalResidualsTrees();
+  void FillCorrectedResiduals();
   void ClosureTest();
   void CreateLocalResidualsTrees(int mode);
   void ProcessResiduals();
@@ -134,7 +131,7 @@ public:
 			const TNDArrayT<short>* harrZ,const TNDArrayT<float>* harrStat);
   void ExtractDistortionsData(TH1F* histo, float est[kNEstPar], const UChar_t vox[kVoxDim], float minNorm=5.f, float fracLTM=0.7f);
 
-  void InitForBugFix(const char* ocdb="raw://");
+  void InitGeom();
   THnF* CreateVoxelStatHisto(int sect);
   THn* CreateSectorResidualsHisto(int sect, int nbDelta,float range, const char* pref);
 
@@ -160,13 +157,9 @@ public:
   void  FixAlignmentBug(int sect, float q2pt, float bz, float& alp, float& x, float &z, float &deltaY, float &deltaZ);
 
   Bool_t ValidateTrack();
-  Bool_t CompareToHelix(int nCl, const float *x, const float *y, const float *z, 
-			const float *phi,const int *sect36,
-			float &q2ptFit, float &tgLamFit, float* tgSlope,
-			float *resHelixY, float *resHelixZ, float maxDevY, float maxDevZ);
+  Bool_t CompareToHelix(float *resHelixY, float *resHelixZ);
 
-  int    CheckResiduals(int np, const float *x, const float *y, const float *z, const int *sec36, 
-			Bool_t* kill,float &rmsLongMA,int nVois=3,float cut=16.,int nVoisLong=15);
+  int    CheckResiduals(Bool_t* kill,float &rmsLongMA);
 
 
 //------------------------------------ misc. stat. methods
@@ -187,20 +180,20 @@ public:
 
 //------------------------------------
 
-  void FillHoles(int isect, bres_t *sectData, const int fNBProdSectG[2], int minGoodPoints);
+  void    FillHoles(int isect, bres_t *sectData, const int fNBProdSectG[2], int minGoodPoints); // obsolete
   
 
-  Int_t Smooth0(int isect);
-  Bool_t GetSmoothEstimate(int isect, float x, float p, float z, float *res, float *deriv=0);
-  void SetKernelType(int tp=kEpanechnikovKernel, float bwX=2.5, float bwP=2.5, float bwZ=2.1, 
-		     float scX=1.f,float scP=1.f,float scZ=1.f);
+  Int_t   Smooth0(int isect);
+  Bool_t  GetSmoothEstimate(int isect, float x, float p, float z, float *res, float *deriv=0);
+  void    SetKernelType(int tp=kEpanechnikovKernel, float bwX=2.5, float bwP=2.5, float bwZ=2.1, 
+	                float scX=1.f,float scP=1.f,float scZ=1.f);
   
-  void CreateCorrectionObject();
-  void InitBinning(int nbx, int nby, int nbz);
-  Int_t GetXBin(float x);
-  Int_t GetRowID(float x);
+  void    CreateCorrectionObject();
+  void    InitBinning();
+  Int_t   GetXBin(float x);
+  Int_t   GetRowID(float x);
   
-  Bool_t FindVoxelBin(int sectID, float tgSlp, float q2pt, float x, float y, float z, UChar_t bin[kVoxHDim],float voxVars[kVoxHDim]);
+  Bool_t  FindVoxelBin(int sectID, float tgSlp, float q2pt, float x, float y, float z, UChar_t bin[kVoxHDim],float voxVars[kVoxHDim]);
   
   Int_t   GetXBinExact(float x);
   Float_t GetY2X(int ix, int iy);
@@ -223,12 +216,86 @@ public:
   void    FindVoxel(float x, float y2x, float z2x, UChar_t &ix,UChar_t &ip, UChar_t &iz);
   void    GetVoxelCoordinates(int isec, int ix, int ip, int iz,float &x, float &p, float &z);
   Double_t GetKernelWeight(double *u2vec, int np) const;
-  //  Int_t  GetQBin(float tgp, int binX, int binY);
-  Int_t  GetQBin(float tgp);
-  Long64_t GetBin2Fill(const Long64_t bprod[kVoxHDim],const UChar_t binVox[kVoxDim], UShort_t bVal);
-  Int_t  GetVoxGBin(int ix, int ip, int iz);
-  Int_t  GetVoxGBin(UChar_t bvox[kVoxDim]);
 
+  //  Int_t  GetQBin(float tgp, int binX, int binY);
+  Int_t    GetQBin(float tgp);
+  Long64_t GetBin2Fill(const Long64_t bprod[kVoxHDim],const UChar_t binVox[kVoxDim], UShort_t bVal);
+  Int_t    GetVoxGBin(int ix, int ip, int iz);
+  Int_t    GetVoxGBin(UChar_t bvox[kVoxDim]);
+
+  //
+  void     SetRun(int run)                       {fRun = run;}
+  void     SetTMinMax(Long64_t tmin=0, Long64_t tmax=9999999999) {fTMin=tmin; fTMax=tmax;}
+  void     SetMaxDY(float m=6.0)                 {fMaxDY = m;}
+  void     SetMaxDZ(float m=6.0)                 {fMaxDZ = m;}
+  void     SetMaxQ2Pt(float v=3.0)               {fMaxQ2Pt = v;}
+  void     SetMidQ2Pt(float v=1.22)              {fMidQ2Pt = v;}
+  void     SetNXBins(int n=kNPadRows)            {fNXBins = n;}
+  void     SetNY2XBins(int n=15)                 {fNY2XBins = n;}
+  void     SetNZ2XBins(int n=10)                 {fNZ2XBins = n;}
+  void     SetNDeltaBinsY(int n=120)             {fNDeltaYBins = n;}
+  void     SetNDeltaBinsZ(int n=120)             {fNDeltaZBins = n;}
+  void     SetMaxTracks(int n=10000000)          {fMaxTracks = n;}
+  void     SetFixAligmentBug(Bool_t v=kTRUE)     {fFixAlignmentBug = v;}
+  void     SetCacheLearnSize(int n=1)            {fLearnSize = n;}
+  void     SetCacheInput(Int_t v=100)            {fCacheInp = v;}
+  void     SetSwitchCache(Bool_t v=kFALSE)       {fSwitchCache = v;}
+  void     SetApplyZt2Zc(Bool_t v=kTRUE)         {fApplyZt2Zc = v;}
+  void     SetResidualList(const char* l)        {fResidualList = l;}
+  void     SetOCDBPath(const char* l)            {fOCDBPath = l;}
+  void     SetUseErrorInSmoothing(Bool_t v=kTRUE) {fUseErrInSmoothing = v;}
+  void     SetNPrimTrackCuts(int n=600)          {fNPrimTracksCut = n;}
+  void     SetMinNClusters(int n=30)             {fMinNCl = n;}
+  void     SetNVoisinMA(int n=3)                 {fNVoisinMA = n;}
+  void     SetNVoisinMALong(int n=15)            {fNVoisinMALong = n;}
+  void     SetMaxDevYHelix(float d=0.3)          {fMaxDevYHelix = d;}
+  void     SetMaxDevZHelix(float d=0.3)          {fMaxDevZHelix = d;}
+  void     SetMaxStdDevMA(float v=25.0)          {fMaxStdDevMA = v;}
+  void     SetMaxRMSLong(float v=0.8)            {fMaxRMSLong = v;}
+  void     SetMaxRejFrac(float v=0.15)           {fMaxRejFrac = v;}
+  void     SetFilterOutliers(Bool_t v=kTRUE)     {fFilterOutliers = v;}
+
+
+  Int_t    GetRun()                         const {return fRun;}
+  Long64_t GetTMin()                        const {return fTMin;}
+  Long64_t GetTMax()                        const {return fTMax;}  
+  Float_t  GetMaxDY()                       const {return fMaxDY;}
+  Float_t  GetMaxDZ()                       const {return fMaxDZ;}
+  Float_t  GetMaxQ2Pt()                     const {return fMaxQ2Pt;}
+  Float_t  GetMidQ2Pt()                     const {return fMidQ2Pt;}
+  Int_t    GetNXBins()                      const {return fNXBins;}
+  Int_t    GetNY2XBins()                    const {return fNY2XBins;}
+  Int_t    GetNZ2XBins()                    const {return fNZ2XBins;}
+  Int_t    GetNDeltaBinsY()                 const {return fNDeltaYBins;}
+  Int_t    GetNDeltaBinsZ()                 const {return fNDeltaZBins;}
+  Int_t    GetMaxTracks()                   const {return fMaxTracks;}
+  Int_t    GetCacheInput()                  const {return fCacheInp;}
+  Int_t    GetCacheLearnSize()              const {return fLearnSize;}
+  Int_t    GetNPrimTrackCuts()              const {return fNPrimTracksCut;}
+  Int_t    GetMinNClusters()                const {return fMinNCl;}
+  Int_t    GetNVoisinMA()                   const {return fNVoisinMA;}
+  Int_t    GetNVoisinMALong()               const {return fNVoisinMALong;}
+  Float_t  GetMaxDevYHelix()                const {return fMaxDevYHelix;}
+  Float_t  GetMaxDevZHelix()                const {return fMaxDevZHelix;}
+  Float_t  GetMaxStdDevMA()                 const {return fMaxStdDevMA;}
+  Float_t  GetMaxRMSLong()                  const {return fMaxRMSLong;}
+  Float_t  GetMaxRejFrac()                  const {return fMaxRejFrac;}
+  Bool_t   GetFilterOutliers()              const {return fFilterOutliers;}
+
+  Bool_t   GetFixAlignmentBug()             const {return fFixAlignmentBug;}
+  Bool_t   GetSwitchCache()                 const {return fSwitchCache;}
+  Bool_t   GetApplyZt2Zc()                  const {return fApplyZt2Zc;}
+  Bool_t   GetUseErrorInSmoothing()         const {return fUseErrInSmoothing;}
+  
+  const TString& GetOCDBPath()              const {return fOCDBPath;}
+  const TString& GetReisdualList()          const {return fResidualList;}
+
+  const AliTPCChebCorr* GetChebCorrObject() const {return fChebCorr;}
+
+
+  static void SetUsedInstance(AliTPCDcalibRes* inst) {fgUsedInstance = inst;}
+  static AliTPCDcalibRes* GetUsedInstance()          {return fgUsedInstance;}
+  static float GetTPCRowX(int r)                     {return kTPCRowX[r];}
 protected:
   //
   Bool_t   fInitDone;                               // init flag
@@ -255,6 +322,7 @@ protected:
   Float_t  fBz;            // B field
   Bool_t   fDeleteSectorTrees; // delete residuals trees once statistics tree is done
   TString  fResidualList;  // list of residuals tree
+  TString  fOCDBPath;      // ocdb path
 
   // ------------------------------Selection/filtering cuts
   Int_t    fNPrimTracksCut;          // of >0, cut on event multiplicity
@@ -341,6 +409,7 @@ protected:
   dtc_t fDTC;                            //! corrected residuals for closure test
   //
   // ---------------------------track data-----------------------------------
+  int   fTimeStamp;                       //! time stamp
   int   fNCl;                             //! number of clusters
   float fQ2Pt;                            //! fitted q2pt
   float fTgLam;                           //! fitted tgLambda
@@ -354,6 +423,8 @@ protected:
   float fArrZTr[kNPadRows];               //! ref tracz Z
   float fArrTgSlp[kNPadRows];             //! track inclination at padrow
   int   fArrSectID[kNPadRows];            //! cluster sector id 
+  //
+  static AliTPCDcalibRes* fgUsedInstance; //! interface instance to use for parameterization
   //
   static const float kSecDPhi;
   static const float kMinX;   // min X to cover
