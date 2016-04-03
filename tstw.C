@@ -27,6 +27,9 @@
 #include "AliSymMatrix.h"
 #include "AliTPCChebCorr.h"
 
+#include "TGraph.h"
+#include "TCanvas.h"
+
 
 enum {kExtractMode, kClosureTestMode};
 enum {kEpanechnikovKernel, kGaussianKernel};
@@ -286,9 +289,19 @@ void trainCorr(int row, float* tzLoc, float* corrLoc);
 //void SetKernelType(int tp = kGaussianKernel, float bwX=1.f, float bwP=0.6f, float bwZ=0.3f, float scX=1,float scP=1,float scZ=1);
 void SetKernelType(int tp = kEpanechnikovKernel, float bwX=2.5f, float bwP=2.5f, float bwZ=2.1f, float scX=1,float scP=1,float scZ=1);
 
+//--------------------
+TGraph* gr=0;
+TF1* ft=0;
+TCanvas* cnv=0;
+void fmed(float& a, float& b,
+	  int nh,const float* arrXV, 
+	  const TH1** arrH, const int* bmin=0, const int* bmax=0);
+//--------------------
+
+
 void CreateCorrectionObject();
 
-void  InitForBugFix(const char* ocdb = "local:///cvmfs/alice.cern.ch/calibration/data/2015/OCDB");
+void  InitForBugFix(const char* ocdb = "raw://"); //"local:///cvmfs/alice.cern.ch/calibration/data/2015/OCDB");
 THnF* CreateVoxelStatHisto(int sect);
 THn* CreateSectorResidualsHisto(int sect, int nbDelta,float range, const char* pref);
 void ProcessSectorResiduals(int is, bstat_t& stat);
@@ -3670,3 +3683,72 @@ inline Float_t GetDZ2XI()
   return fDZ2XI;
 }
 
+void fmed(float& a, float& b,
+	  int nh,const float* arrXV, 
+	  const TH1** arrH, const int* bmin, const int* bmax)
+{
+  static float* arrTmp = 0;
+  static int nBook = 0;
+  int np = 0;
+  for (int i=nh;i--;) np += arrH[i]->GetEntries();
+  np += np;
+  if (np>nBook) { // make sure the buffer is ok
+    nBook = np;
+    delete[] arrTmp;
+    arrTmp = new float[nBook];
+  }
+  float *arrx = arrTmp;
+  float *arry = arrTmp+np/2;
+  int npfill = 0;
+  for (int ih=0;ih<nh;ih++) {
+    const TH1* h = arrH[ih];
+    int b0 = bmin ? bmin[ih] : 1;
+    int b1 = bmax ? bmax[ih] : h->GetNbinsX();
+    float x = arrXV[ih];
+    for (int ib=b0;ib<=b1;ib++) {
+      int w = TMath::Nint(h->GetBinContent(ib));
+      if (!w) continue;
+      float y = h->GetBinCenter(ib);
+      for (int i=w;i--;) {
+	arrx[npfill] = x;
+	arry[npfill] = y;
+	npfill++;
+      }
+    }
+    //
+  }
+  //
+  medFit(npfill,arrx,arry,a,b);
+  delete gr;
+  if (!cnv) cnv = new TCanvas();
+  cnv->Clear();
+  gr = new TGraph(npfill,arrx,arry);
+  gr->SetMarkerStyle(7);
+  gr->Draw("ap");
+  if (!ft) ft = new TF1("ft","pol1",-1,1);
+  ft->SetParameters(a,b);
+  ft->Draw("same");
+}
+
+TH1* TstXY(float a, float b, 
+	   int nh,const float* arrXV, 
+	   const TH1** arrH, const int* bmin, const int* bmax)
+{
+  TH1* htst = 0;
+  if (!htst) htst = (TH1*)arrH[0]->Clone("htst");
+  htst->Reset();
+  for (int ih=0;ih<nh;ih++) {
+    const TH1* h = arrH[ih];
+    int b0 = bmin ? bmin[ih] : 1;
+    int b1 = bmax ? bmax[ih] : h->GetNbinsX();
+    float x = arrXV[ih];
+    for (int ib=b0;ib<=b1;ib++) {
+      int w = TMath::Nint(h->GetBinContent(ib));
+      if (!w) continue;
+      float y = h->GetBinCenter(ib) - (a+b*x);
+      htst->Fill(y, w);
+    }
+    //
+  }
+  return htst;
+}
