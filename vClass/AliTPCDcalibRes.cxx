@@ -2718,10 +2718,10 @@ Bool_t AliTPCDcalibRes::GetSmoothEstimate(int isect, float x, float p, float z, 
     for (int i=izMx-izMn+1;i--;) if (nOccZ[i]) npz++;
     if (npx<2 || npp<2 || npz<2 || nbOK<kMinPointsTot) {
       trial++;
-      printf("Sector:%2d x=%.3f y/x=%.3f z/x=%.3f (iX:%d iY2X:%d iZ2X:%d)\n"
-	     "not enough neighbours (need min %d) %d %d %d (tot: %d) | Steps: %.1f %.1f %.1f\n"
-	     "trying to increase filter bandwidth (trial%d)\n",
-	     isect,x,p,z,ix0,ip0,iz0,2,npx,npp,npz,nbOK,stepX,stepF,stepZ,trial);
+      AliWarningF("Sector:%2d x=%.3f y/x=%.3f z/x=%.3f (iX:%d iY2X:%d iZ2X:%d)\n"
+		  "not enough neighbours (need min %d) %d %d %d (tot: %d) | Steps: %.1f %.1f %.1f"
+		  "trying to increase filter bandwidth (trial%d)\n",
+		  isect,x,p,z,ix0,ip0,iz0,2,npx,npp,npz,nbOK,stepX,stepF,stepZ,trial);
       continue;
     }
     //
@@ -2760,9 +2760,9 @@ Bool_t AliTPCDcalibRes::GetSmoothEstimate(int isect, float x, float p, float z, 
     }
     if (!fitRes) {
       trial++;
-      printf("Sector:%2d x=%.3f y/x=%.3f z/x=%.3f (iX:%d iY2X:%d iZ2X:%d)\n"
+      AliWarningF("Sector:%2d x=%.3f y/x=%.3f z/x=%.3f (iX:%d iY2X:%d iZ2X:%d)\n"
 	     "neighbours range used %d %d %d (tot: %d) | Steps: %.1f %.1f %.1f\n"
-	     "Solution for smoothing Failed, trying to increase filter bandwidth (trial%d)\n",
+	     "Solution for smoothing Failed, trying to increase filter bandwidth (trial%d)",
 	     isect,x,p,z,ix0,ip0,iz0,npx,npp,npz,nbOK,stepX,stepF,stepZ,trial);
       continue;
     }
