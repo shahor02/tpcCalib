@@ -185,6 +185,7 @@ public:
 
   Int_t   Smooth0(int isect);
   Bool_t  GetSmoothEstimate(int isect, float x, float p, float z, float *res, float *deriv=0);
+  Bool_t  GetSmoothEstimate(int isect, float x, float p, float z, int dim, float &res, float *deriv=0);
   void    SetKernelType(int tp=kEpanechnikovKernel, float bwX=2.5, float bwP=2.5, float bwZ=2.1, 
 	                float scX=1.f,float scP=1.f,float scZ=1.f);
   
@@ -378,8 +379,8 @@ protected:
   Int_t    fStepKern[kVoxDim]; // N bins to consider with given kernel settings
   Float_t  fKernelWInv[kVoxDim];      // inverse kernel width in bins
   Float_t  fKernelScaleEdge[kVoxDim]; // optional scaling factors for kernel width on the edge
-
-  Double_t fLastSmoothingRes[kResDim*4];  // result of last kernel minimization
+  // result of last kernel minimization: value and dV/dX,dV/dY,dV/dZ for each dim
+  Double_t fLastSmoothingRes[kResDim*4];  
 
   // ------------------------------Selection Stats
   Int_t    fNTrSelTot;      // selected tracks
