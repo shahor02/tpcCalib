@@ -190,7 +190,7 @@ public:
   
 
   Int_t   Smooth0(int isect);
-  Bool_t  GetSmoothEstimate(int isect, float x, float p, float z, float *res, float *deriv=0);
+  Bool_t  GetSmoothEstimate(int isect, float x, float p, float z, int which, float *res, float *deriv=0);
   Bool_t  GetSmoothEstimateDim(int isect, float x, float p, float z, int dim, float &res, float *deriv=0);
   void    SetKernelType(int tp=kEpanechnikovKernel, float bwX=2.5, float bwP=2.5, float bwZ=2.1, 
 	                float scX=1.f,float scP=1.f,float scZ=1.f);
@@ -351,6 +351,7 @@ protected:
   Int_t    fNY2XBins;    // y/x bins per sector
   Int_t    fNZ2XBins;    // z/x bins per sector
   Int_t    fNXBins;      // n bins in radial dim.
+  Int_t    fNXYBinsProd; // nx*ny bins
   Int_t    fNDeltaYBins; // n bins in Y residual space
   Int_t    fNDeltaZBins; // n bins in Z residual space
   Bool_t   fUniformBins[kVoxDim]; // uniform binning? Currently only X may be non-uniform (per pad-row)
@@ -365,12 +366,12 @@ protected:
 
   Int_t    fNGVoxPerSector; // total number of geometrical voxels per sector (excluding Q binning)
 
-  Float_t  *fMaxY2X;        // max Y/X at each X bin, account for dead zones
-  Float_t  *fDY2X;          // Y/X bin size at given X bin
-  Float_t  *fDY2XI;         // inverse of Y/X bin size at given X bin
-  Float_t  *fBinMinQ;       // min value of tg(inclination) at given X,Y bin
-  Float_t  *fBinDQ;         // tg(inclination) bin size at given X,Y bin
-  Float_t  *fBinDQI;        // inverse of tg(inclination) bin size at given X,Y bin
+  Float_t  *fMaxY2X;        //[fNXBins] max Y/X at each X bin, account for dead zones
+  Float_t  *fDY2X;          //[fNXBins] Y/X bin size at given X bin
+  Float_t  *fDY2XI;         //[fNXBins] inverse of Y/X bin size at given X bin
+  Float_t  *fBinMinQ;       //[fNXYBinsProd] min value of tg(inclination) at given X,Y bin
+  Float_t  *fBinDQ;         //[fNXYBinsProd] tg(inclination) bin size at given X,Y bin
+  Float_t  *fBinDQI;        //[fNXYBinsProd] inverse of tg(inclination) bin size at given X,Y bin
 
   Long64_t fNBProdSt[kVoxHDim]; // aux arrays for fast bin calculation
   Long64_t fNBProdDY[kVoxHDim];

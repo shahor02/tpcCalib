@@ -100,6 +100,7 @@ AliTPCDcalibRes::AliTPCDcalibRes(int run,Long64_t tmin,Long64_t tmax,const char*
   ,fNY2XBins(15)
   ,fNZ2XBins(10)
   ,fNXBins(-1)
+  ,fNXYBinsProd(0)
   ,fNDeltaYBins(120)
   ,fNDeltaZBins(120)  
   ,fDZ2X(0)
@@ -201,7 +202,6 @@ void AliTPCDcalibRes::ProcessFromDeltaTrees()
 {
   // process from residual trees
   TStopwatch sw;
-  Init();
   // select tracks matching to time window and write compact local trees
   CollectData(kExtractMode);
   //
@@ -218,7 +218,6 @@ void AliTPCDcalibRes::ProcessFromLocalBinnedTrees()
   TStopwatch sw;
   sw.Start();
 
-  LoadStatHistos();
   // do per-sector projections and fits
   ProcessResiduals();
   // store treee with voxels definitions
@@ -321,7 +320,7 @@ void AliTPCDcalibRes::CollectData(int mode)
 {
   const float kEps = 1e-6;
   const float q2ptIniTolerance = 1.5;
-  if (!fInitDone) {AliError("Init not done"); return;}
+  if (!fInitDone) Init();
   //  gEnv->SetValue("TFile.AsyncPrefetching", 1);
   TVectorF *vecDY=0,*vecDZ=0,*vecZ=0,*vecR=0,*vecSec=0,*vecPhi=0, *vecDYITS=0,*vecDZITS=0;
   UShort_t npValid = 0;
@@ -803,8 +802,8 @@ void AliTPCDcalibRes::ClosureTest()
 void AliTPCDcalibRes::ProcessResiduals()
 {
   // project local trees, extract distortions
-  if (!fInitDone) {AliError("Init not done"); return;}
-
+  if (!fInitDone) Init(); //{AliError("Init not done"); return;}
+  LoadStatHistos();
   bstat_t voxStat, *statP = &voxStat;
   AliSysInfo::AddStamp("ProcResid",0,0,0,0);
   TFile* flOut = new TFile(Form("%sTree.root",kStatOut),"recreate");
@@ -848,8 +847,9 @@ void AliTPCDcalibRes::ProcessResiduals()
 void AliTPCDcalibRes::ProcessDispersions()
 {
   // extract distortions of corrected Y residuals
-  if (!fInitDone) {AliError("Init not done"); return;}
+  if (!fInitDone) Init(); //{AliError("Init not done"); return;}
   //
+  LoadStatHistos();
   for (int is=0;is<kNSect2;is++) {
     ProcessSectorDispersions(is);
     if (fDeleteSectorTrees) {
@@ -868,7 +868,7 @@ void AliTPCDcalibRes::ProcessSectorDispersions(int is)
   const float kEps = 1e-6;
 
   if (!fInitDone) {AliError("Init not done"); return;}
-
+  TStopwatch sw;  sw.Start();
   AliSysInfo::AddStamp("ProcessSectorDispersions",is,0,0,0);
 
   TString sectFileName = Form("%s%d.root",kLocalResFileName,is);
@@ -903,9 +903,10 @@ void AliTPCDcalibRes::ProcessSectorDispersions(int is)
     dy -= voxRes->DS[kResY] - voxRes->DS[kResX]*tgSlp;
     //
     // don't allow for over/underflow
-    if (TMath::Abs(dy>fMaxDY-kEps)) continue;
+    if (TMath::Abs(dy)>fMaxDY-kEps) continue;
     //
     UShort_t  binDY = (dy+fMaxDY)*fDeltaYbinI;
+    binGlo = GetBin2Fill(fNBProdDY,fDTS.bvox,binDY);
     ndArrYC->At(binGlo)++;
     npAcc++;
     //
@@ -924,6 +925,7 @@ void AliTPCDcalibRes::ProcessSectorDispersions(int is)
   sectFile->Close();
   delete sectFile;
   //
+  AliInfoF("Sector %2d | timing: real: %.3f cpu: %.3f",is, sw.RealTime(), sw.CpuTime());
   AliSysInfo::AddStamp("ProcessSectorDispersions",1,0,0,0);
   //
 }
@@ -1063,8 +1065,8 @@ void AliTPCDcalibRes::ExtractVoxelData(bstat_t &stat,
 				       const TNDArrayT<float>* harrStat)
 {
   // Extract distortion estimators from each voxel histo
-  if (!fHDelY) fHDelY = new TH1F("dy","dy",fNDeltaYBins,-fMaxDY,fMaxDY);
-  if (!fHDelZ) fHDelZ = new TH1F("dz","dz",fNDeltaZBins,-fMaxDZ,fMaxDZ);
+  if (!fHDelY) {fHDelY = new TH1F("dy","dy",fNDeltaYBins,-fMaxDY,fMaxDY); fHDelY->SetDirectory(0);}
+  if (!fHDelZ) {fHDelZ = new TH1F("dz","dz",fNDeltaZBins,-fMaxDZ,fMaxDZ); fHDelZ->SetDirectory(0);}
   //
   UChar_t bvox1[kVoxDim];
   for (stat.bvox[kVoxZ]=0;stat.bvox[kVoxZ]<fNZ2XBins;stat.bvox[kVoxZ]++) {
@@ -1103,7 +1105,7 @@ void AliTPCDcalibRes::ExtractVoxelDispersion(int is, const TNDArrayT<short>* har
   const float kMinNormG2M = 0.2f; // min ratio between Gaussian amplitude and max Value
   const float kZeroSigma = 1e-4; 
   //
-  if (!fHDelY) fHDelY = new TH1F("dy","dy",fNDeltaYBins,-fMaxDY,fMaxDY);
+  if (!fHDelY) {fHDelY = new TH1F("dy","dy",fNDeltaYBins,-fMaxDY,fMaxDY); fHDelY->SetDirectory(0);}
   //
   bres_t* sectData = fSectGVoxRes[is]; // raw and smoothed results
   float estDisp[kNEstPar] = {0.0f};
@@ -1134,9 +1136,9 @@ void AliTPCDcalibRes::ExtractVoxelDispersion(int is, const TNDArrayT<short>* har
 	    estDisp[kEstSigG]>kMaxSigG2L) okG = kFALSE;
 
 	if (okL) { 
-	  voxRes->D[kResD] = okG ? estDisp[kEstMeanG]  : estDisp[kEstMeanL];
-	  voxRes->E[kResD] = okG ? estDisp[kEstMeanEG]  : estDisp[kEstMeanEL];
-	  if (!voxRes->E[kResD]) voxRes->D[kResD]/TMath::Sqrt(estDisp[kEstNorm]); // LTM does not provide the error
+	  voxRes->D[kResD] = okG ? estDisp[kEstSigG]  : estDisp[kEstSigL];
+	  voxRes->E[kResD] = okG ? estDisp[kEstSigEG]  : estDisp[kEstSigEL];
+	  if (!voxRes->E[kResD]) voxRes->E[kResD] = voxRes->D[kResD]/TMath::Sqrt(estDisp[kEstNorm]); // LTM does not provide the error
 	}
       } // loop over voxF
     } // loop over voxX
@@ -2307,9 +2309,9 @@ TH1F* AliTPCDcalibRes::ExtractResidualHisto(Int_t htype, int sect,
 //__________________________________________________________________
 void AliTPCDcalibRes::ExtractXYZDistortions()
 {
-  if (!fInitDone) {AliError("Init not done"); return;}
-
+  if (!fInitDone) Init(); //{AliError("Init not done"); return;}
   TStopwatch sw;
+  LoadStatHistos();
   // extract XYZ distortions from fitted Y,Z residuals vs Q variable
   bstat_t voxStat, *statP = &voxStat;
   bstat_t voxIQ[kNQBins];
@@ -2659,7 +2661,9 @@ Int_t AliTPCDcalibRes::Smooth0(int isect)
       for (int iz=0;iz<fNZ2XBins;iz++) {  // extract line in z
 	int binGlo = GetVoxGBin(ix,ip,iz);
 	bres_t *vox = &sectData[binGlo];
-	Bool_t res = GetSmoothEstimate(vox->bsec,vox->stat[kVoxX],vox->stat[kVoxF],vox->stat[kVoxZ],vox->DS);
+	Bool_t res = GetSmoothEstimate(vox->bsec,vox->stat[kVoxX],vox->stat[kVoxF],vox->stat[kVoxZ],
+				       BIT(kResX)|BIT(kResY)|BIT(kResZ), // at this moment we cannot smooth dispersion
+				       vox->DS);
 	vox->smooth = res;
 	if (res) cnt++;
       }
@@ -2670,35 +2674,31 @@ Int_t AliTPCDcalibRes::Smooth0(int isect)
 }
 
 //________________________________________________________________
-Bool_t AliTPCDcalibRes::GetSmoothEstimate(int isect, float x, float p, float z, float *res, float *deriv)
+Bool_t AliTPCDcalibRes::GetSmoothEstimate(int isect, float x, float p, float z, Int_t which, float *res, float *deriv)
 {
-  // get smooth estimate for point in sector coordinates (x,y/x,z/x)
+  // get smooth estimate of distortions mentioned in "which" bit pattern for point in sector coordinates (x,y/x,z/x)
   // smoothing results also saved in the fLastSmoothingRes (allow derivative calculation)
   //
   const int kMinPointsTot = 4; // we fit 12 paremeters, each point provides 3 values
   const int kMaxTrials = 5; // max allowed iterations if neighbours are missing
   const float kTrialStep = 0.5;
-
-  res[kResX]=res[kResY]=res[kResZ] = 0;
+  
+  Bool_t doDim[kResDim] = {kFALSE};
+  for (int i=0;i<kResDim;i++) {
+    doDim[i] = (which&(0x1<<i))>0;
+    if (doDim[i]) res[i] = 0;
+  }
   //
-  double cmatX[10],cmatY[10],cmatZ[10];
-  double &m00x=cmatX[0], 
-    &m10x=cmatX[1], &m11x=cmatX[2], 
-    &m20x=cmatX[3], &m21x=cmatX[4], &m22x=cmatX[5], 
-    &m30x=cmatX[6], &m31x=cmatX[7], &m32x=cmatX[8], &m33x=cmatX[9];
-  double &m00y=cmatY[0], 
-    &m10y=cmatY[1], &m11y=cmatY[2], 
-    &m20y=cmatY[3], &m21y=cmatY[4], &m22y=cmatY[5], 
-    &m30y=cmatY[6], &m31y=cmatY[7], &m32y=cmatY[8], &m33y=cmatY[9];
-  double &m00z=cmatZ[0], 
-    &m10z=cmatZ[1], &m11z=cmatZ[2], 
-    &m20z=cmatZ[3], &m21z=cmatZ[4], &m22z=cmatZ[5], 
-    &m30z=cmatZ[6], &m31z=cmatZ[7], &m32z=cmatZ[8], &m33z=cmatZ[9];
+  enum {kM00,
+	kM10,kM11,
+	kM20,kM21,kM22,
+	kM30,kM31,kM32,kM33,kMN};
+  double cmat[kResDim][kMN];
 
   //loop over neighbours which can contribute
   //
   bres_t *currClus[fNMaxNeighb];
-  double *rhsX = &fLastSmoothingRes[0], *rhsY = &fLastSmoothingRes[4] , *rhsZ = &fLastSmoothingRes[8];
+  double *rhsX=&fLastSmoothingRes[0],*rhsY=&fLastSmoothingRes[4],*rhsZ=&fLastSmoothingRes[8],*rhsD=&fLastSmoothingRes[12];
   //
   int ix0,ip0,iz0;
   FindVoxel(x,p, isect<kNSect ? z : -z, ix0,ip0,iz0); // find nearest voxel
@@ -2709,14 +2709,10 @@ Bool_t AliTPCDcalibRes::GetSmoothEstimate(int isect, float x, float p, float z, 
   int trial = 0, nbOK = 0;
   while(1)  {
     //
-    memset(fLastSmoothingRes,0,kResDimG*4*sizeof(double));
+    memset(fLastSmoothingRes,0,kResDim*4*sizeof(double));
     if (trial>kMaxTrials) {printf("Trials limit reached\n"); return kFALSE;}
 
-    memset(cmatX,0,10*sizeof(double));
-    if (fUseErrInSmoothing) { // in this case we cannot use the same matrix for x,y,z
-      memset(cmatY,0,10*sizeof(double));
-      memset(cmatZ,0,10*sizeof(double));
-    }
+    memset(cmat,0,kResDim*10*sizeof(double));
     //
     nbOK=0; // accounted neighbours
     //
@@ -2801,65 +2797,20 @@ Bool_t AliTPCDcalibRes::GetSmoothEstimate(int isect, float x, float p, float z, 
 	  nOccF[ip-ipMn]++;
 	  nOccZ[iz-izMn]++;
 	  //
-	  if (fUseErrInSmoothing) { // apart from the kernel value, account for the point error
-	    double kernWX = kernW/(voxNb->E[kResX]*voxNb->E[kResX]);
-	    double kernWY = kernW/(voxNb->E[kResY]*voxNb->E[kResY]);
-	    double kernWZ = kernW/(voxNb->E[kResZ]*voxNb->E[kResZ]);
-	    //
-	    m00x += kernWX;
-	    m10x += kernWX*dx;   m11x += kernWX*dx*dx;
-	    m20x += kernWX*df;   m21x += kernWX*dx*df;  m22x += kernWX*df*df;
-	    m30x += kernWX*dz;   m31x += kernWX*dx*dz;  m32x += kernWX*df*dz;   m33x += kernWX*dz*dz;
-	    //
-	    m00y += kernWY;
-	    m10y += kernWY*dx;   m11y += kernWY*dx*dx;
-	    m20y += kernWY*df;   m21y += kernWY*dx*df;  m22y += kernWY*df*df;
-	    m30y += kernWY*dz;   m31y += kernWY*dx*dz;  m32y += kernWY*df*dz;   m33y += kernWY*dz*dz;
-	    //
-	    m00z += kernWZ;
-	    m10z += kernWZ*dx;   m11z += kernWZ*dx*dx;
-	    m20z += kernWZ*df;   m21z += kernWZ*dx*df;  m22z += kernWZ*df*df;
-	    m30z += kernWZ*dz;   m31z += kernWZ*dx*dz;  m32z += kernWZ*df*dz;   m33z += kernWZ*dz*dz;
-	    //
-	    rhsX[0] += kernWX*voxNb->D[kResX];
-	    rhsY[0] += kernWY*voxNb->D[kResY];
-	    rhsZ[0] += kernWZ*voxNb->D[kResZ];
-	    //
-	    rhsX[1] += kernWX*voxNb->D[kResX]*dx;
-	    rhsY[1] += kernWY*voxNb->D[kResY]*dx;
-	    rhsZ[1] += kernWZ*voxNb->D[kResZ]*dx;
-	    //
-	    rhsX[2] += kernWX*voxNb->D[kResX]*df;
-	    rhsY[2] += kernWY*voxNb->D[kResY]*df;
-	    rhsZ[2] += kernWZ*voxNb->D[kResZ]*df;
-	    //
-	    //
-	    rhsX[3] += kernWX*voxNb->D[kResX]*dz;
-	    rhsY[3] += kernWY*voxNb->D[kResY]*dz;
-	    rhsZ[3] += kernWZ*voxNb->D[kResZ]*dz;	    
-	  }
-	  else { // single matrix is used
-	    //
-	    m00x += kernW;
-	    m10x += kernW*dx;   m11x += kernW*dx*dx;
-	    m20x += kernW*df;   m21x += kernW*dx*df;  m22x += kernW*df*df;
-	    m30x += kernW*dz;   m31x += kernW*dx*dz;  m32x += kernW*df*dz;   m33x += kernW*dz*dz;
-	    //
-	    rhsX[0] += kernW*voxNb->D[kResX];
-	    rhsY[0] += kernW*voxNb->D[kResY];
-	    rhsZ[0] += kernW*voxNb->D[kResZ];
-	    //
-	    rhsX[1] += kernW*voxNb->D[kResX]*dx;
-	    rhsY[1] += kernW*voxNb->D[kResY]*dx;
-	    rhsZ[1] += kernW*voxNb->D[kResZ]*dx;
-	    //
-	    rhsX[2] += kernW*voxNb->D[kResX]*df;
-	    rhsY[2] += kernW*voxNb->D[kResY]*df;
-	    rhsZ[2] += kernW*voxNb->D[kResZ]*df;
-	    //
-	    rhsX[3] += kernW*voxNb->D[kResX]*dz;
-	    rhsY[3] += kernW*voxNb->D[kResY]*dz;
-	    rhsZ[3] += kernW*voxNb->D[kResZ]*dz;
+	  for (int id=0;id<kResDim;id++) {
+	    if (!doDim[id]) continue;
+	    double kernWD = kernW;
+	    if (fUseErrInSmoothing) kernWD /= (voxNb->E[id]*voxNb->E[id]); // apart from the kernel value, account for the point error
+	    double *cmatD = cmat[id];
+	    cmatD[kM00] += kernWD;
+	    cmatD[kM10] += kernWD*dx;   cmatD[kM11] += kernWD*dx*dx;
+	    cmatD[kM20] += kernWD*df;   cmatD[kM21] += kernWD*dx*df;  cmatD[kM22] += kernWD*df*df;
+	    cmatD[kM30] += kernWD*dz;   cmatD[kM31] += kernWD*dx*dz;  cmatD[kM32] += kernWD*df*dz;   cmatD[kM33] += kernWD*dz*dz;
+	    double *rhsD = &fLastSmoothingRes[id*4];
+	    rhsD[0] += kernWD*voxNb->D[id];
+	    rhsD[1] += kernWD*voxNb->D[id]*dx;
+	    rhsD[2] += kernWD*voxNb->D[id]*df;
+	    rhsD[3] += kernWD*voxNb->D[id]*dz;	      
 	  }
 	  //
 	  currClus[nbOK] = voxNb;
@@ -2876,7 +2827,7 @@ Bool_t AliTPCDcalibRes::GetSmoothEstimate(int isect, float x, float p, float z, 
     if (npx<2 || npp<2 || npz<2 || nbOK<kMinPointsTot) {
       trial++;
       AliWarningF("Sector:%2d x=%.3f y/x=%.3f z/x=%.3f (iX:%d iY2X:%d iZ2X:%d)\n"
-		  "not enough neighbours (need min %d) %d %d %d (tot: %d) | Steps: %.1f %.1f %.1f"
+		  "not enough neighbours (need min %d) %d %d %d (tot: %d) | Steps: %.1f %.1f %.1f\n"
 		  "trying to increase filter bandwidth (trial%d)\n",
 		  isect,x,p,z,ix0,ip0,iz0,2,npx,npp,npz,nbOK,stepX,stepF,stepZ,trial);
       continue;
@@ -2886,56 +2837,33 @@ Bool_t AliTPCDcalibRes::GetSmoothEstimate(int isect, float x, float p, float z, 
     //
     // solve system of linear equations
     AliSymMatrix mat(4);
-    if (fUseErrInSmoothing) {
-      mat(0,0) = m00x;
-      mat(1,0) = m10x;   mat(1,1) = m11x;
-      mat(2,0) = m20x;   mat(2,1) = m21x;  mat(2,2) = m22x; 
-      mat(3,0) = m30x;   mat(3,1) = m31x;  mat(3,2) = m32x;  mat(3,3) = m33x;
-      fitRes &= mat.SolveChol(rhsX);
-      //
+    for (int id=0;id<kResDim;id++) {
+      if (!doDim[id]) continue;
       mat.Reset();
-      mat(0,0) = m00y;
-      mat(1,0) = m10y;   mat(1,1) = m11y;
-      mat(2,0) = m20y;   mat(2,1) = m21y;  mat(2,2) = m22y; 
-      mat(3,0) = m30y;   mat(3,1) = m31y;  mat(3,2) = m32y;  mat(3,3) = m33y;
-      fitRes &= mat.SolveChol(rhsY);
-      //
-      mat.Reset();
-      mat(0,0) = m00z;
-      mat(1,0) = m10z;   mat(1,1) = m11z;
-      mat(2,0) = m20z;   mat(2,1) = m21z;  mat(2,2) = m22z; 
-      mat(3,0) = m30z;   mat(3,1) = m31z;  mat(3,2) = m32z;  mat(3,3) = m33z;
-      fitRes &= mat.SolveChol(rhsZ);
-    }
-    else {
-      mat(0,0) = m00x;
-      mat(1,0) = m10x;   mat(1,1) = m11x;
-      mat(2,0) = m20x;   mat(2,1) = m21x;  mat(2,2) = m22x; 
-      mat(3,0) = m30x;   mat(3,1) = m31x;  mat(3,2) = m32x;  mat(3,3) = m33x;
-      fitRes &= mat.SolveCholN(fLastSmoothingRes,kResDimG);
-    //
-    }
-    if (!fitRes) {
-      trial++;
-      AliWarningF("Sector:%2d x=%.3f y/x=%.3f z/x=%.3f (iX:%d iY2X:%d iZ2X:%d)\n"
-	     "neighbours range used %d %d %d (tot: %d) | Steps: %.1f %.1f %.1f\n"
-	     "Solution for smoothing Failed, trying to increase filter bandwidth (trial%d)",
-	     isect,x,p,z,ix0,ip0,iz0,npx,npp,npz,nbOK,stepX,stepF,stepZ,trial);
-      continue;
+      double *cmatD = cmat[id];
+      double *rhsD = &fLastSmoothingRes[id*4];
+      mat(0,0) = cmatD[kM00];
+      mat(1,0) = cmatD[kM10];   mat(1,1) = cmatD[kM11];
+      mat(2,0) = cmatD[kM20];   mat(2,1) = cmatD[kM21];  mat(2,2) = cmatD[kM22]; 
+      mat(3,0) = cmatD[kM30];   mat(3,1) = cmatD[kM31];  mat(3,2) = cmatD[kM32];  mat(3,3) = cmatD[kM33];
+      fitRes &= mat.SolveChol(rhsD);
+      if (!fitRes) {
+	trial++;
+	AliWarningF("Sector:%2d x=%.3f y/x=%.3f z/x=%.3f (iX:%d iY2X:%d iZ2X:%d)\n"
+		    "neighbours range used %d %d %d (tot: %d) | Steps: %.1f %.1f %.1f\n"
+		    "Solution for smoothing Failed, trying to increase filter bandwidth (trial%d)",
+		    isect,x,p,z,ix0,ip0,iz0,npx,npp,npz,nbOK,stepX,stepF,stepZ,trial);
+	continue;
+      }
+      res[id] = rhsD[0];
+      if (deriv) for (int j=0;j<3;j++) deriv[id*3 +j] = rhsD[j+1];
     }
     //
     break; // success
   } // end of loop over allowed trials
-  res[0] = rhsX[0];
-  res[1] = rhsY[0];
-  res[2] = rhsZ[0];
-  //
-  if (deriv) { // derivatives are requested
-    for (int i=0;i<kResDimG;i++) {
-      for (int j=0;j<3;j++) deriv[j] = fLastSmoothingRes[i*4+j+1];
-    }
-  }
+
   return kTRUE;
+
 }
 
 
@@ -3180,9 +3108,8 @@ void AliTPCDcalibRes::CreateCorrectionObject()
 {
   // create correction object for given time slice
 
-  AliSysInfo::AddStamp("MakeCheb",0,0,0,0);
-
-
+  AliSysInfo::AddStamp("CreateCorrectionObject",0,0,0,0);
+  
   TString name = Form("run%d_%lld_%lld",fRun,fTMin,fTMax);
   fChebCorr = new AliTPCChebCorr(name.Data(),name.Data(),
 				 fChebPhiSlicePerSector,fChebZSlicePerSide,1.0f);
@@ -3193,9 +3120,9 @@ void AliTPCDcalibRes::CreateCorrectionObject()
   fChebCorr->SetUseZ2R(kTRUE);
   //
   SetUsedInstance(this);
-  fChebCorr->Parameterize(trainCorr,3,fNPCheb,fChebPrecD);
+  fChebCorr->Parameterize(trainCorr,kResDim,fNPCheb,fChebPrecD);
   //
-  AliSysInfo::AddStamp("MakeCheb",1,0,0,0);
+  AliSysInfo::AddStamp("CreateCorrectionObject",1,0,0,0);
 }
 
 //________________________________________________________________
@@ -3224,10 +3151,10 @@ void AliTPCDcalibRes::InitBinning()
   fDY2XI  = new Float_t[fNXBins];        // inverse of Y/X bin size at given X bin
   fDY2X   = new Float_t[fNXBins];        // Y/X bin size at given X bin
   //
-  int nxy = fNXBins*fNY2XBins;
-  fBinMinQ = new Float_t[nxy];
-  fBinDQI  = new Float_t[nxy];
-  fBinDQ   = new Float_t[nxy];
+  fNXYBinsProd = fNXBins*fNY2XBins;
+  fBinMinQ = new Float_t[fNXYBinsProd];
+  fBinDQI  = new Float_t[fNXYBinsProd];
+  fBinDQ   = new Float_t[fNXYBinsProd];
   //
   const float kMaxY2X = TMath::Tan(0.5f*kSecDPhi);
 
@@ -3382,7 +3309,8 @@ void trainCorr(int row, float* tzLoc, float* corrLoc)
   float y2x = tzLoc[0];
   float z2x = tzLoc[1];
   //
-  Bool_t res = AliTPCDcalibRes::GetUsedInstance()->GetSmoothEstimate(sector, x, y2x, z2x, dist);
+  Bool_t res = AliTPCDcalibRes::GetUsedInstance()->GetSmoothEstimate(sector, x, y2x, z2x, 
+								     0xf, dist);
   if (!res) { printf("Failed to evaluate smooth distortion\n"); exit(1); }
 
   /*
