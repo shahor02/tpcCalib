@@ -3305,13 +3305,13 @@ void trainCorr(int row, float* tzLoc, float* corrLoc)
   }
   //
   float x = AliTPCDcalibRes::GetTPCRowX(row);
-  float dist[3], deriv[9];
+  float dist[AliTPCDcalibRes::kResDim], deriv[AliTPCDcalibRes::kResDim*3];
 
   float y2x = tzLoc[0];
   float z2x = tzLoc[1];
   //
   Bool_t res = AliTPCDcalibRes::GetUsedInstance()->GetSmoothEstimate(sector, x, y2x, z2x, 
-								     0xf, dist);
+								     0xff, dist);
   if (!res) { printf("Failed to evaluate smooth distortion\n"); exit(1); }
 
   /*
