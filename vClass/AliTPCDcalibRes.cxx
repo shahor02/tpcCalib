@@ -3349,9 +3349,7 @@ void trainCorr(int row, float* tzLoc, float* corrLoc)
   }
   */
 
-  corrLoc[AliTPCDcalibRes::kResX] = dist[AliTPCDcalibRes::kResX];
-  corrLoc[AliTPCDcalibRes::kResY] = dist[AliTPCDcalibRes::kResY];
-  corrLoc[AliTPCDcalibRes::kResZ] = dist[AliTPCDcalibRes::kResZ];
+  for (int i=0;i<AliTPCDcalibRes::kResDim;i++) corrLoc[i] = dist[i];
   //
 }
 //======================================================================================
