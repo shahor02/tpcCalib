@@ -19,6 +19,7 @@
 #include <TStopwatch.h>
 #include <TGraphErrors.h>
 #include <TGeoMatrix.h>
+#include "AliLog.h"
 #include "AliExternalTrackParam.h"
 #include "AliTPCcalibAlignInterpolation.h"
 #include "AliGeomManager.h"
@@ -47,7 +48,7 @@ class AliTPCDcalibRes: public TNamed
 	kVoxV,   // variable within the voxel (delta, stat, etc): last dimension of all THn histos
 	kVoxHDim, kVoxDim=kVoxHDim-1};
 
-  enum {kResX,kResY,kResZ,kResDim}; // output dimensions
+  enum {kResX,kResY,kResZ,kResD,kResDim,kResDimG=kResDim-1}; // output dimensions
 
   // content of processed voxel
   enum {kEstNorm,kEstMean,kEstSig,kEstMax,  // statistics
@@ -56,8 +57,10 @@ class AliTPCDcalibRes: public TNamed
 	kNEstPar};
 
   struct dts_t {  // struct for basic residual
-    UChar_t dy;   // Y residual
-    UChar_t dz;   // Z residual
+    //    UChar_t dy;   // Y residual
+    //    UChar_t dz;   // Z residual
+    Double32_t dy; //[-kMaxResid,kMaxResid,12] 
+    Double32_t dz; //[-kMaxResid,kMaxResid,12] 
     UChar_t bvox[kVoxDim]; // voxel bin info: kVoxQ,kVoxF,kVoxX,kVoxZ
   };
 
@@ -125,8 +128,11 @@ public:
   void ClosureTest();
   void CreateLocalResidualsTrees(int mode);
   void ProcessResiduals();
+  void ProcessDispersions();
   void WriteVoxelDefinitions();
   void ProcessSectorResiduals(int is, bstat_t &voxStat);
+  void ProcessSectorDispersions(int is);
+  void ExtractVoxelDispersion(int is, const TNDArrayT<short>* harrYC, float maxGChi2=5);
   void ExtractVoxelData(bstat_t &stat,const TNDArrayT<short>* harrY,
 			const TNDArrayT<short>* harrZ,const TNDArrayT<float>* harrStat);
   void ExtractDistortionsData(TH1F* histo, float est[kNEstPar], const UChar_t vox[kVoxDim], float minNorm=5.f, float fracLTM=0.7f);
@@ -149,8 +155,8 @@ public:
   Float_t ExtractResidualHisto(const TNDArrayT<short>* harr, const Long64_t bprod[kVoxHDim], 
 			       const UChar_t voxMin[kVoxDim], const UChar_t voxMax[kVoxDim], TH1F* dest);
 
-  TH1F* ExtractResidualHisto(Bool_t y, int sect, const UChar_t vox[kVoxDim]);
-  TH1F* ExtractResidualHisto(Bool_t y, int sect, const UChar_t vox[kVoxDim], const UChar_t vox1[kVoxDim]);
+  TH1F* ExtractResidualHisto(int htype, int sect, const UChar_t vox[kVoxDim]);
+  TH1F* ExtractResidualHisto(int htype, int sect, const UChar_t vox[kVoxDim], const UChar_t vox1[kVoxDim]);
   void  ExtractXYZDistortions();
   Bool_t ExtractVoxelXYZDistortions(const bstat_t voxIQ[kNQBins], bres_t &res, 
 				    int minStat=20, float maxGChi2=5, int minYBinsOK=3);
@@ -185,7 +191,7 @@ public:
 
   Int_t   Smooth0(int isect);
   Bool_t  GetSmoothEstimate(int isect, float x, float p, float z, float *res, float *deriv=0);
-  Bool_t  GetSmoothEstimate(int isect, float x, float p, float z, int dim, float &res, float *deriv=0);
+  Bool_t  GetSmoothEstimateDim(int isect, float x, float p, float z, int dim, float &res, float *deriv=0);
   void    SetKernelType(int tp=kEpanechnikovKernel, float bwX=2.5, float bwP=2.5, float bwZ=2.1, 
 	                float scX=1.f,float scP=1.f,float scZ=1.f);
   
@@ -225,10 +231,10 @@ public:
   Int_t    GetVoxGBin(UChar_t bvox[kVoxDim]);
 
   //
+  void     SetMaxDY(float m=6.0);
+  void     SetMaxDZ(float m=6.0);
   void     SetRun(int run)                       {fRun = run;}
   void     SetTMinMax(Long64_t tmin=0, Long64_t tmax=9999999999) {fTMin=tmin; fTMax=tmax;}
-  void     SetMaxDY(float m=6.0)                 {fMaxDY = m;}
-  void     SetMaxDZ(float m=6.0)                 {fMaxDZ = m;}
   void     SetMaxQ2Pt(float v=3.0)               {fMaxQ2Pt = v;}
   void     SetMidQ2Pt(float v=1.22)              {fMidQ2Pt = v;}
   void     SetNXBins(int n=kNPadRows)            {fNXBins = n;}
@@ -256,12 +262,11 @@ public:
   void     SetMaxRejFrac(float v=0.15)           {fMaxRejFrac = v;}
   void     SetFilterOutliers(Bool_t v=kTRUE)     {fFilterOutliers = v;}
 
-
+  Float_t  GetMaxDY()                       const {return fMaxDY;}
+  Float_t  GetMaxDZ()                       const {return fMaxDZ;}
   Int_t    GetRun()                         const {return fRun;}
   Long64_t GetTMin()                        const {return fTMin;}
   Long64_t GetTMax()                        const {return fTMax;}  
-  Float_t  GetMaxDY()                       const {return fMaxDY;}
-  Float_t  GetMaxDZ()                       const {return fMaxDZ;}
   Float_t  GetMaxQ2Pt()                     const {return fMaxQ2Pt;}
   Float_t  GetMidQ2Pt()                     const {return fMidQ2Pt;}
   Int_t    GetNXBins()                      const {return fNXBins;}
@@ -428,6 +433,7 @@ protected:
   static AliTPCDcalibRes* fgUsedInstance; //! interface instance to use for parameterization
   //
   static const float kSecDPhi;
+  static const float kMaxResid; // max allowed residual  
   static const float kMinX;   // min X to cover
   static const float kMaxX;   // max X to cover
   static const float kMaxZ2X;   // max z/x
@@ -663,6 +669,28 @@ inline Int_t AliTPCDcalibRes::GetVoxGBin(UChar_t bvox[kVoxDim])
 {
   // index of geometrix voxel (no Q info)
   return bvox[kVoxZ]+fNBProdSectG[1]*bvox[kVoxF]+fNBProdSectG[0]*bvox[kVoxX];
+}
+
+//_____________________________________________________
+inline void AliTPCDcalibRes::SetMaxDY(float v)
+{
+  // set max accepted residual
+  if (v>kMaxResid) {
+    AliWarningF("Redefining %.2f to max allowed %.2f",v,kMaxResid);
+    v = kMaxResid;
+  }
+  fMaxDY = v;
+}
+
+//_____________________________________________________
+inline void AliTPCDcalibRes::SetMaxDZ(float v)
+{
+  // set max accepted residual
+  if (v>kMaxResid) {
+    AliWarningF("Redefining %.2f to max allowed %.2f",v,kMaxResid);
+    v = kMaxResid;
+  }
+  fMaxDZ = v;
 }
 
 

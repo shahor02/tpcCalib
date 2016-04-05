@@ -1,18 +1,18 @@
 #include "AliTPCDcalibRes.h"
-#include "AliLog.h"
 
 // this must be standalone f-n, since the signature is important for Chebyshev training
 void trainCorr(int row, float* tzLoc, float* corrLoc);
 
 
 const char* AliTPCDcalibRes::kVoxName[AliTPCDcalibRes::kVoxDim] = {"tgSlp","y2x","x","z2x"};
-const char* AliTPCDcalibRes::kResName[AliTPCDcalibRes::kResDim] = {"dX","dY","dZ"};
+const char* AliTPCDcalibRes::kResName[AliTPCDcalibRes::kResDim] = {"dX","dY","dZ","Disp"};
 const char* AliTPCDcalibRes::kEstName[AliTPCDcalibRes::kNEstPar] = {
   "Nrm","Mean","Sig","Max",
   "MeanL","MeanEL","SigL","SigEL",
   "NormG","MeanG","MeanEG","SigG","SigEG","Chi2G"};
 
 const float AliTPCDcalibRes::kSecDPhi = 20.f*TMath::DegToRad();
+const float AliTPCDcalibRes::kMaxResid = 7.0f;
 const float AliTPCDcalibRes::kMinX = 85.0f;
 const float AliTPCDcalibRes::kMaxX = 246.0f;
 const float AliTPCDcalibRes::kMaxZ2X = 1.0f;
@@ -238,6 +238,8 @@ void AliTPCDcalibRes::ProcessFromStatTree()
   sw.Start();
 
   ExtractXYZDistortions();
+  //
+  ProcessDispersions();
   //
   CreateCorrectionObject();
   //
@@ -599,8 +601,10 @@ void AliTPCDcalibRes::FillLocalResidualsTrees()
     // calculate voxel variables and bins
     // 
     if (!FindVoxelBin(sectID, fArrTgSlp[icl], fQ2Pt, fArrX[icl], fArrYCl[icl], fArrZCl[icl], fDTS.bvox, voxVars)) continue;    
-    fDTS.dy   = (fArrDY[icl]+fMaxDY)*fDeltaYbinI;
-    fDTS.dz   = (fArrDZ[icl]+fMaxDZ)*fDeltaZbinI;
+    fDTS.dy   = fArrDY[icl];
+    fDTS.dz   = fArrDZ[icl];
+    //    fDTS.dy   = (fArrDY[icl]+fMaxDY)*fDeltaYbinI;
+    //    fDTS.dz   = (fArrDZ[icl]+fMaxDZ)*fDeltaZbinI;
     //
     fTmpTree[sectID]->Fill();
     //
@@ -821,11 +825,12 @@ void AliTPCDcalibRes::ProcessResiduals()
     ProcessSectorResiduals(is, voxStat);
     AliSysInfo::AddStamp("ProjResid",is);
     //
-    if (fDeleteSectorTrees) {
-      TString sectFileName = Form("%s%d.root",kLocalResFileName,is);
-      AliInfoF("Deleting %s",sectFileName.Data());
-      unlink(sectFileName.Data());
-    }
+    // don't delete here, they are needed for dispersions extraction
+    //if (fDeleteSectorTrees) {
+    //  TString sectFileName = Form("%s%d.root",kLocalResFileName,is);
+    //  AliInfoF("Deleting %s",sectFileName.Data());
+    //  unlink(sectFileName.Data());
+    // }
   }
   //
   flOut->cd();
@@ -836,6 +841,90 @@ void AliTPCDcalibRes::ProcessResiduals()
   delete flOut;
   //
   AliSysInfo::AddStamp("ProcResid",1,0,0,0);
+  //
+}
+
+//________________________________________________
+void AliTPCDcalibRes::ProcessDispersions()
+{
+  // extract distortions of corrected Y residuals
+  if (!fInitDone) {AliError("Init not done"); return;}
+  //
+  for (int is=0;is<kNSect2;is++) {
+    ProcessSectorDispersions(is);
+    if (fDeleteSectorTrees) {
+      TString sectFileName = Form("%s%d.root",kLocalResFileName,is);
+      AliInfoF("Deleting %s",sectFileName.Data());
+      unlink(sectFileName.Data());
+    }
+  }
+  //
+}
+
+//________________________________________________
+void AliTPCDcalibRes::ProcessSectorDispersions(int is)
+{
+  // extract dispersion of corrected residuals
+  const float kEps = 1e-6;
+
+  if (!fInitDone) {AliError("Init not done"); return;}
+
+  AliSysInfo::AddStamp("ProcessSectorDispersions",is,0,0,0);
+
+  TString sectFileName = Form("%s%d.root",kLocalResFileName,is);
+  TFile* sectFile = TFile::Open(sectFileName.Data());
+  if (!sectFile) AliFatalF("file %s not found",sectFileName.Data());
+  TString treeName = Form("ts%d",is);
+  TTree *sectTree = (TTree*) sectFile->Get(treeName.Data());
+  if (!sectTree) AliFatalF("tree %s is not found in file %s",treeName.Data(),sectFileName.Data());
+  //
+  dts_t *dtsP = &fDTS; 
+  sectTree->SetBranchAddress("dts",&dtsP);
+  int npoints = sectTree->GetEntries();
+  //
+  THnS *hisCY = (THnS*)CreateSectorResidualsHisto(is, fNDeltaYBins, fMaxDY, kResName[kResD]);
+  TNDArrayT<short>* ndArrYC = (TNDArrayT<short>*)&hisCY->GetArray();
+  bres_t* sectData = fSectGVoxRes[is]; // raw and smoothed results
+  int npAcc = 0;
+  for (int ip=0;ip<npoints;ip++) {
+    sectTree->GetEntry(ip);
+    float dy = fDTS.dy; 
+    //   float dz = fDTS.dz; // we use only dy to extract dispersion
+    //
+    // extract smoothed distortions for this voxel
+    Long64_t binGlo = GetVoxGBin(fDTS.bvox[kVoxX],fDTS.bvox[kVoxF],fDTS.bvox[kVoxZ]);
+    bres_t* voxRes = &sectData[binGlo];
+    //
+    // extract mean q/pt for this voxel
+    binGlo = GetBin2Fill(fNBProdSt,fDTS.bvox,kVoxQ);
+    float tgSlp = fArrNDStat[is]->At(binGlo);
+    //
+    // correct 
+    dy -= voxRes->DS[kResY] - voxRes->DS[kResX]*tgSlp;
+    //
+    // don't allow for over/underflow
+    if (TMath::Abs(dy>fMaxDY-kEps)) continue;
+    //
+    UShort_t  binDY = (dy+fMaxDY)*fDeltaYbinI;
+    ndArrYC->At(binGlo)++;
+    npAcc++;
+    //
+  }
+  //
+  hisCY->SetEntries(npAcc);
+  //
+  ExtractVoxelDispersion(is, ndArrYC);
+  //
+  // at the moment save corrected histos ...
+  TFile* flOut = TFile::Open(Form("residualSect%d.root",is),"update"); // RS shall we dump all sector histos to 1 file?
+  hisCY->Write("", TObject::kOverwrite);
+  flOut->Close(); 
+  //
+  delete sectTree;
+  sectFile->Close();
+  delete sectFile;
+  //
+  AliSysInfo::AddStamp("ProcessSectorDispersions",1,0,0,0);
   //
 }
 
@@ -920,15 +1009,17 @@ void AliTPCDcalibRes::ProcessSectorResiduals(int is, bstat_t &voxStat)
   sectTree->SetBranchAddress("dts",&dtsP);
   int npoints = sectTree->GetEntries();
   //
-  THnS *hisY = (THnS*)CreateSectorResidualsHisto(is, fNDeltaYBins, fMaxDY, "DY");
-  THnS *hisZ = (THnS*)CreateSectorResidualsHisto(is, fNDeltaZBins, fMaxDZ, "DZ");  
+  THnS *hisY = (THnS*)CreateSectorResidualsHisto(is, fNDeltaYBins, fMaxDY, kResName[kResY]);
+  THnS *hisZ = (THnS*)CreateSectorResidualsHisto(is, fNDeltaZBins, fMaxDZ, kResName[kResZ]);
   TNDArrayT<short>* ndArrY = (TNDArrayT<short>*)&hisY->GetArray();
   TNDArrayT<short>* ndArrZ = (TNDArrayT<short>*)&hisZ->GetArray();
   //
   for (int ip=0;ip<npoints;ip++) {
     sectTree->GetEntry(ip);
-    UShort_t  binDY = fDTS.dy;
-    UShort_t  binDZ = fDTS.dz;
+    UShort_t  binDY = (fDTS.dy+fMaxDY)*fDeltaYbinI;
+    UShort_t  binDZ = (fDTS.dz+fMaxDZ)*fDeltaZbinI;
+    //    UShort_t  binDY = fDTS.dy;
+    //    UShort_t  binDZ = fDTS.dz;
     ULong64_t binToFillY = GetBin2Fill(fNBProdDY,fDTS.bvox,binDY);
     ULong64_t binToFillZ = GetBin2Fill(fNBProdDZ,fDTS.bvox,binDZ);
     //
@@ -1001,6 +1092,67 @@ void AliTPCDcalibRes::ExtractVoxelData(bstat_t &stat,
     }
   }
   //
+}
+
+//_________________________________________________
+void AliTPCDcalibRes::ExtractVoxelDispersion(int is, const TNDArrayT<short>* harrYC,
+					     float maxGChi2)
+{
+  // Extract distortion estimators from each voxel histo
+  const float kMaxSigG2L = 5.0f; // max ratio between Gaussian sigma and RMS LTM
+  const float kMinNormG2M = 0.2f; // min ratio between Gaussian amplitude and max Value
+  const float kZeroSigma = 1e-4; 
+  //
+  if (!fHDelY) fHDelY = new TH1F("dy","dy",fNDeltaYBins,-fMaxDY,fMaxDY);
+  //
+  bres_t* sectData = fSectGVoxRes[is]; // raw and smoothed results
+  float estDisp[kNEstPar] = {0.0f};
+  UChar_t bvox[kVoxDim],bvox1[kVoxDim];
+  // 1st extract raw dispersion
+  for (bvox[kVoxZ]=0;bvox[kVoxZ]<fNZ2XBins;bvox[kVoxZ]++) {
+    for (bvox[kVoxX]=0;bvox[kVoxX]<fNXBins;bvox[kVoxX]++) { 
+      for (bvox[kVoxF]=0;bvox[kVoxF]<fNY2XBins;bvox[kVoxF]++) {
+	//
+	// we integrate over all Q bins, since no dependence is expected
+	bvox[kVoxQ]=0;
+	for (int i=kVoxDim;i--;) bvox1[i] = bvox[i];
+	bvox1[kVoxQ] = kNQBins-1;
+	ExtractResidualHisto(harrYC,fNBProdDY,bvox,bvox1,fHDelY); // integrate over Q bins
+	ExtractDistortionsData(fHDelY, estDisp , bvox);
+	//
+	Long64_t binGlo = GetVoxGBin(bvox[kVoxX],bvox[kVoxF],bvox[kVoxZ]);
+	bres_t* voxRes = &sectData[binGlo]; // destinate voxel to store the dispersion
+	//
+	Bool_t okG=kFALSE,okL;
+	okG = okL = estDisp[kEstSigL]>kZeroSigma && estDisp[kEstMeanEL]>0;
+	voxRes->D[kResD] = 0;
+	voxRes->E[kResD] = -1;
+	//
+	if (okG && 
+	    estDisp[kEstNormG]<kMinNormG2M*estDisp[kEstMax] || // gaussian norm should not be negligible
+	    estDisp[kEstChi2G]>maxGChi2 || estDisp[kEstSigG]<kZeroSigma ||
+	    estDisp[kEstSigG]>kMaxSigG2L) okG = kFALSE;
+
+	if (okL) { 
+	  voxRes->D[kResD] = okG ? estDisp[kEstMeanG]  : estDisp[kEstMeanL];
+	  voxRes->E[kResD] = okG ? estDisp[kEstMeanEG]  : estDisp[kEstMeanEL];
+	  if (!voxRes->E[kResD]) voxRes->D[kResD]/TMath::Sqrt(estDisp[kEstNorm]); // LTM does not provide the error
+	}
+      } // loop over voxF
+    } // loop over voxX
+  } // loop over voxZ
+  //
+  // now smooth the dispersion
+  for (bvox[kVoxZ]=0;bvox[kVoxZ]<fNZ2XBins;bvox[kVoxZ]++) {
+    for (bvox[kVoxX]=0;bvox[kVoxX]<fNXBins;bvox[kVoxX]++) { 
+      for (bvox[kVoxF]=0;bvox[kVoxF]<fNY2XBins;bvox[kVoxF]++) {
+	int binGlo = GetVoxGBin(bvox[kVoxX],bvox[kVoxF],bvox[kVoxZ]);
+	bres_t *voxRes = &sectData[binGlo];
+	Bool_t res = GetSmoothEstimateDim(is,voxRes->stat[kVoxX],voxRes->stat[kVoxF],voxRes->stat[kVoxZ],
+				       int(kResD), voxRes->DS[kResD]);
+      }
+    }
+  }
 }
 
 //______________________________________________________________________________
@@ -1348,7 +1500,7 @@ THnF* AliTPCDcalibRes::CreateVoxelStatHisto(int sect)
 //___________________________________________________________________________
 THn* AliTPCDcalibRes::CreateSectorResidualsHisto(int sect, int nbDelta,float range, const char* pref)
 {
-  // prepare histogram to store the residuals withing the sector
+  // prepare histogram to store the residuals within the sector
 
   // create binning for voxels and residuals
   Int_t voxNBins[kVoxHDim];
@@ -2098,22 +2250,24 @@ float AliTPCDcalibRes::ExtractResidualHisto(const TNDArrayT<short>* harr, const 
 }
 
 //___________________________________________________________________________________
-TH1F* AliTPCDcalibRes::ExtractResidualHisto(Bool_t y, int sect, const UChar_t vox[kVoxDim])
+TH1F* AliTPCDcalibRes::ExtractResidualHisto(int htype, int sect, const UChar_t vox[kVoxDim])
 {
   // create Y or Z residuals for the voxel in sector sect,  from THn to 1D histo
   TString fln = Form("residualSect%d.root",sect);
   TFile* fl = TFile::Open(fln.Data());
   if (!fl) {printf("Failed to open %s\n",fln.Data()); return 0;}
-  THnS* hn = (THnS*)fl->Get(Form("delta%d_D%s",sect,y ? "Y":"Z"));
-  if (!hn) {printf("Did not find histo %s in %s\n",Form("delta%d_D%s",sect,y ? "Y":"Z"),fln.Data());return 0;}
-  TString ttl = Form("d%s_S%d_vox%d_%d_%d_%d",y ? "Y":"Z",sect,vox[kVoxQ],vox[kVoxF],vox[kVoxX],vox[kVoxZ]);
+  TString hname = Form("delta%d_%s",sect,kResName[htype]);
+  THnS* hn = (THnS*)fl->Get(hname.Data());
+  if (!hn) {printf("Did not find histo %s in %s\n",hname.Data(),fln.Data());return 0;}
+  TString ttl = Form("d%s_S%d_vox%d_%d_%d_%d",kResName[htype] ,sect,vox[kVoxQ],vox[kVoxF],vox[kVoxX],vox[kVoxZ]);
+  Bool_t typeY = htype==kResY||htype==kResD;
   TH1F* h1 = new TH1F(ttl.Data(),ttl.Data(),
-		      y ? fNDeltaYBins : fNDeltaZBins ,
-		      y ? -fMaxDY : -fMaxDZ,
-		      y ?  fMaxDY :  fMaxDZ);
+		      typeY ? fNDeltaYBins : fNDeltaZBins ,
+		      typeY ? -fMaxDY : -fMaxDZ,
+		      typeY ?  fMaxDY :  fMaxDZ);
   h1->SetDirectory(0);
   const TNDArrayT<short>* harr = (TNDArrayT<short>*)&hn->GetArray();
-  ExtractResidualHisto(harr, y ? fNBProdDY : fNBProdDZ, vox, h1);
+  ExtractResidualHisto(harr, typeY ? fNBProdDY : fNBProdDZ, vox, h1);
   delete hn;
   fl->Close();
   delete fl;
@@ -2122,24 +2276,27 @@ TH1F* AliTPCDcalibRes::ExtractResidualHisto(Bool_t y, int sect, const UChar_t vo
 }
 
 //___________________________________________________________________________________
-TH1F* AliTPCDcalibRes::ExtractResidualHisto(Bool_t y, int sect, const UChar_t vox[kVoxDim], const UChar_t vox1[kVoxDim])
+TH1F* AliTPCDcalibRes::ExtractResidualHisto(Int_t htype, int sect, 
+					    const UChar_t vox[kVoxDim], const UChar_t vox1[kVoxDim])
 {
   // create Y or Z residuals for the voxel in sector sect,  from THn to 1D histo
   TString fln = Form("residualSect%d.root",sect);
   TFile* fl = TFile::Open(fln.Data());
   if (!fl) {printf("Failed to open %s\n",fln.Data()); return 0;}
-  THnS* hn = (THnS*)fl->Get(Form("delta%d_D%s",sect,y ? "Y":"Z"));
-  if (!hn) {printf("Did not find histo %s in %s\n",Form("delta%d_D%s",sect,y ? "Y":"Z"),fln.Data());return 0;}
-  TString ttl = Form("d%s_S%d_vox%d_%d_%d_%d__%d_%d_%d_%d",y ? "Y":"Z",sect,
+  TString hname = Form("delta%d_%s",sect,kResName[htype]);
+  THnS* hn = (THnS*)fl->Get(hname.Data());
+  if (!hn) {printf("Did not find histo %s in %s\n",hname.Data(),fln.Data());return 0;}
+  Bool_t typeY = htype==kResY||htype==kResD;
+  TString ttl = Form("d%s_S%d_vox%d_%d_%d_%d__%d_%d_%d_%d", kResName[htype], sect,
 		     vox[kVoxQ],vox[kVoxF],vox[kVoxX],vox[kVoxZ],
 		     vox1[kVoxQ],vox1[kVoxF],vox1[kVoxX],vox1[kVoxZ]);
   TH1F* h1 = new TH1F(ttl.Data(),ttl.Data(),
-		      y ? fNDeltaYBins : fNDeltaZBins ,
-		      y ? -fMaxDY : -fMaxDZ,
-		      y ?  fMaxDY :  fMaxDZ);
+		      typeY ? fNDeltaYBins : fNDeltaZBins ,
+		      typeY ? -fMaxDY : -fMaxDZ,
+		      typeY ?  fMaxDY :  fMaxDZ);
   h1->SetDirectory(0);
   const TNDArrayT<short>* harr = (TNDArrayT<short>*)&hn->GetArray();
-  ExtractResidualHisto(harr, y ? fNBProdDY : fNBProdDZ, vox, vox1, h1);
+  ExtractResidualHisto(harr, typeY ? fNBProdDY : fNBProdDZ, vox, vox1, h1);
   delete hn;
   fl->Close();
   delete fl;
@@ -2220,8 +2377,8 @@ void AliTPCDcalibRes::ExtractXYZDistortions()
 
 //_____________________________________________
 Bool_t AliTPCDcalibRes::ExtractVoxelXYZDistortions(const bstat_t voxIQ[kNQBins], 
-							      bres_t &res, int minStat, 
-							      float maxGChi2, int minYBinsOK)
+						   bres_t &res, int minStat, 
+						   float maxGChi2, int minYBinsOK)
 {
   // extract XYZ distortions from voxel fitted Y,Z residuals vs Q variable
   //
@@ -2248,7 +2405,7 @@ Bool_t AliTPCDcalibRes::ExtractVoxelXYZDistortions(const bstat_t voxIQ[kNQBins],
 	vox.distY[kEstChi2G]>maxGChi2 || vox.distY[kEstSigG]<kZeroSigma ||
 	vox.distY[kEstSigG]>kMaxSigG2L) okG = kFALSE;
     //
-    // assume that measured Y resodual dy is related to real residuals DY and DX as
+    // assume that measured Y resydual dy is related to real residuals DY and DX as
     // dy = DY - DX*tg(slope) 
     // where the slope is average track inclination angle at the pad-row
     // For DZ calculate simple weighted mean
@@ -2300,7 +2457,7 @@ Bool_t AliTPCDcalibRes::ExtractVoxelXYZDistortions(const bstat_t voxIQ[kNQBins],
     res.E[kResZ] = okG ? vox0.distZ[kEstMeanEG] : vox0.distZ[kEstMeanEL];
   }
   //
-  for (int i=0;i<kResDim;i++) res.E[i] = res.E[i]>0 ? TMath::Sqrt(res.E[i]) : 0;
+  for (int i=0;i<kResDimG;i++) res.E[i] = res.E[i]>0 ? TMath::Sqrt(res.E[i]) : 0;
   //
 }
 
@@ -2552,7 +2709,7 @@ Bool_t AliTPCDcalibRes::GetSmoothEstimate(int isect, float x, float p, float z, 
   int trial = 0, nbOK = 0;
   while(1)  {
     //
-    memset(fLastSmoothingRes,0,kResDim*4*sizeof(double));
+    memset(fLastSmoothingRes,0,kResDimG*4*sizeof(double));
     if (trial>kMaxTrials) {printf("Trials limit reached\n"); return kFALSE;}
 
     memset(cmatX,0,10*sizeof(double));
@@ -2755,7 +2912,7 @@ Bool_t AliTPCDcalibRes::GetSmoothEstimate(int isect, float x, float p, float z, 
       mat(1,0) = m10x;   mat(1,1) = m11x;
       mat(2,0) = m20x;   mat(2,1) = m21x;  mat(2,2) = m22x; 
       mat(3,0) = m30x;   mat(3,1) = m31x;  mat(3,2) = m32x;  mat(3,3) = m33x;
-      fitRes &= mat.SolveCholN(fLastSmoothingRes,kResDim);
+      fitRes &= mat.SolveCholN(fLastSmoothingRes,kResDimG);
     //
     }
     if (!fitRes) {
@@ -2774,7 +2931,7 @@ Bool_t AliTPCDcalibRes::GetSmoothEstimate(int isect, float x, float p, float z, 
   res[2] = rhsZ[0];
   //
   if (deriv) { // derivatives are requested
-    for (int i=0;i<kResDim;i++) {
+    for (int i=0;i<kResDimG;i++) {
       for (int j=0;j<3;j++) deriv[j] = fLastSmoothingRes[i*4+j+1];
     }
   }
@@ -2783,8 +2940,8 @@ Bool_t AliTPCDcalibRes::GetSmoothEstimate(int isect, float x, float p, float z, 
 
 
 //________________________________________________________________
-Bool_t AliTPCDcalibRes::GetSmoothEstimate(int isect, float x, float p, float z, int dim, 
-					  float& res, float *deriv)
+Bool_t AliTPCDcalibRes::GetSmoothEstimateDim(int isect, float x, float p, float z, int dim, 
+					     float& res, float *deriv)
 {
   // get smooth estimate of single dimension dim for point in sector coordinates (x,y/x,z/x)
   // smoothing results also saved in the fLastSmoothingRes (allow derivative calculation)
