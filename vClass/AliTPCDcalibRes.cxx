@@ -278,7 +278,8 @@ void AliTPCDcalibRes::Init()
     SetRun(run);
   }
   InitGeom();
-  SetTitle(Form("run%d_%lld_%lld",fRun,fTMin,fTMax));
+  SetName(Form("run%d_%lld_%lld",fRun,fTMin,fTMax));
+  SetTitle(IsA()->GetName());
   //
   if (fMidQ2Pt<0) fMidQ2Pt = fMaxQ2Pt/2.f;
   //  
