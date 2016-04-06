@@ -398,10 +398,10 @@ protected:
   // ------------------------------VDrift correction
   TVectorD     *fVDriftParam;
   TGraphErrors *fVDriftGraph;  
-  Float_t      fCorrTime;
+  Float_t      fCorrTime;   //! 
 
   // -----------------------------Results of processing
-  bres_t *fSectGVoxRes[kNSect2];         //[fNGVoxPerSector] sectors results for geometric voxel
+  bres_t *fSectGVoxRes[kNSect2];         //! [fNGVoxPerSector] sectors results for geometric voxel
   TTree* fStatTree;                      //! tree with voxels statistics
   TTree* fTmpTree[kNSect2];              //! IO tree per sector
   TFile* fTmpFile[kNSect2];              //! file for fTmpTree
