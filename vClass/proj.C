@@ -10,3 +10,15 @@ void proj(int run=245231
   clb->ProcessFromDeltaTrees();
   clb->Save();
 }
+
+void postProj(int run=245231
+	      ,Long64_t tmin=0
+	      ,Long64_t tmax= 9999999999
+	      )
+{
+  gROOT->ProcessLine(".L /home/shahoian/tpcCalib/vClass/AliTPCDcalibRes.cxx+g");
+  AliTPCDcalibRes* clb = new AliTPCDcalibRes(run, tmin, tmax);
+  clb->SetOCDBPath("local:///cvmfs/alice.cern.ch/calibration/data/2015/OCDB");
+  clb->ProcessFromStatTree();
+  clb->Save();
+}
